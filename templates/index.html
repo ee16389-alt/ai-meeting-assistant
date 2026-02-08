@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 會議助理 v1.1.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        :root {
+            --ink: #1f2937;
+            --steel: #374151;
+            --uni-orange: #f36b21;
+            --uni-orange-dark: #d55619;
+            --uni-green: #2aa84a;
+            --uni-green-dark: #1f8a3b;
+            --sun: #f8b400;
+            --panel: rgba(255, 255, 255, 0.95);
+            --panel-strong: rgba(255, 255, 255, 0.98);
+            --border: rgba(17, 24, 39, 0.08);
+            --soft: #fff7ef;
+            --soft-green: #f1fbf4;
+        }
+        @keyframes pulse-red {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-pulse-red { animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        .proofread-updated { border-left: 3px solid #22c55e; padding-left: 8px; transition: all 0.3s; }
+        .tab-active { background-color: var(--uni-orange); color: white; box-shadow: 0 8px 20px rgba(243, 107, 33, 0.25); }
+        .tab-inactive { background-color: white; color: #475569; border: 1px solid rgba(148,163,184,0.2); }
+        .glass {
+            background: var(--panel);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+        }
+        .panel-header {
+            height: 120px;
+        }
+        .panel-body {
+            height: calc(600px - 120px);
+        }
+        .summary-toolbar {
+            margin-top: 6px;
+        }
+        .grid-glow {
+            background-image:
+                radial-gradient(900px 500px at 8% -10%, rgba(243, 107, 33, 0.18), transparent),
+                radial-gradient(900px 500px at 95% -10%, rgba(42, 168, 74, 0.16), transparent),
+                radial-gradient(380px 220px at 10% 25%, rgba(248, 180, 0, 0.18), transparent),
+                radial-gradient(420px 260px at 85% 20%, rgba(255, 122, 168, 0.18), transparent),
+                linear-gradient(180deg, #fff8f3 0%, #f8fafc 55%, #f3f7f2 100%);
+        }
+        
+        .scanline { position: relative; }
+        .card-pop {
+            border-radius: 28px;
+            box-shadow:
+                0 20px 40px rgba(243, 107, 33, 0.08),
+                0 8px 16px rgba(16, 24, 40, 0.04);
+        }
+        .pill { border-radius: 999px; }
+    </style>
+</head>
+<body class="grid-glow font-sans text-slate-900 p-4 md:p-8">
+    <div class="max-w-7xl mx-auto">
+
+        <!-- HEADER -->
+        <header class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 glass p-6 rounded-2xl card-pop">
+            <div class="w-full flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+                <div class="flex items-center gap-3">
+                    <div class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+                    <h1 class="text-2xl font-bold tracking-tight text-slate-900">AI 會議助理</h1>
+                    <span class="text-xs font-mono bg-slate-900/10 text-slate-700 px-2 py-1 rounded pill">v1.1.0</span>
+                </div>
+                <p class="text-slate-600 text-sm mt-1">解耦式 AI 服務架構 (Whisper + Ollama API)</p>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="status-badge" class="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-slate-200 pill">
+                    <i data-lucide="activity" id="status-icon" class="w-4 h-4 text-slate-500"></i>
+                    <span id="status-text" class="text-sm font-medium text-slate-700">準備就緒</span>
+                </div>
+
+                <input id="meeting-name" type="text" placeholder="輸入會議名稱..." class="bg-white border border-slate-200 rounded-lg px-4 py-2 text-sm w-52 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-300 pill">
+                <label class="flex items-center gap-2 text-sm text-slate-700 bg-white border border-slate-200 px-3 py-2 pill">
+                    <input id="save-audio" type="checkbox" class="accent-orange-500">
+                    儲存錄音檔
+                </label>
+
+                <button id="main-btn" onclick="mainAction()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-6 py-2 pill transition-all shadow-lg shadow-orange-500/30">
+                    <i data-lucide="mic" class="w-4 h-4"></i> <span>開始會議</span>
+                </button>
+                <button id="stop-btn" onclick="stopRecording()" class="hidden flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 pill transition-all border border-emerald-600/20">
+                    <i data-lucide="square" class="w-4 h-4"></i> <span>停止</span>
+                </button>
+            </div>
+            </div>
+        </header>
+
+        <!-- MAIN CONTENT -->
+        <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+            <!-- LEFT: 即時逐字稿 -->
+            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop">
+                <div class="flex flex-col h-full">
+                <div class="p-5 border-b border-slate-200 flex flex-col justify-between bg-[var(--soft)] panel-header">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="file-text" class="w-5 h-5 text-orange-500"></i>
+                            <h2 class="font-bold text-slate-900">即時逐字稿 (感知層)</h2>
+                        </div>
+                        <span class="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-orange-100">Whisper Small</span>
+                    </div>
+                    <div class="summary-toolbar"></div>
+                </div>
+                <div id="transcript-container" class="flex-1 overflow-y-auto p-6 space-y-3 panel-body">
+                    <div id="empty-state" class="h-full flex flex-col items-center justify-center text-slate-400">
+                        <i data-lucide="mic" class="w-12 h-12 mb-2 opacity-40"></i>
+                        <p>點擊「開始會議」啟動收音</p>
+                    </div>
+                </div>
+                </div>
+            </section>
+
+            <!-- RIGHT: AI 摘要 -->
+            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop">
+                <div class="flex flex-col h-full">
+                <div class="p-5 border-b border-slate-200 bg-[var(--soft-green)] panel-header">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="cpu" class="w-5 h-5 text-emerald-600"></i>
+                            <h2 class="font-bold text-slate-900">AI 智慧摘要 (認知層)</h2>
+                        </div>
+                        <span class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100">Qwen 2.5</span>
+                    </div>
+                    <div class="flex gap-2 flex-wrap summary-toolbar">
+                        <button onclick="requestSummary('full')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="full">全文摘要</button>
+                        <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points">重點條列</button>
+                        <button onclick="requestSummary('action_items')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="action_items">待辦清單</button>
+                        <button onclick="requestAllSummaries()" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500">全部摘要</button>
+                    </div>
+                </div>
+                <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
+                    <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-400 text-center p-10">
+                        <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-30"></i>
+                        <p>錄音結束後，點選上方分頁產生 AI 摘要</p>
+                    </div>
+                </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- FOOTER -->
+        <footer class="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 glass p-4 rounded-2xl card-pop">
+            <div class="w-full flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3 flex-1">
+                <button onclick="exportMeeting()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-4 py-2 rounded-lg text-sm transition-all border border-slate-200 pill">
+                    <i data-lucide="download" class="w-4 h-4"></i> 匯出逐字稿
+                </button>
+                <select id="summary-export-mode" class="bg-white border border-slate-200 text-slate-700 text-sm px-3 py-2 rounded-lg pill focus:outline-none focus:ring-2 focus:ring-orange-300">
+                    <option value="full">匯出全文摘要</option>
+                    <option value="key_points">匯出重點條列</option>
+                    <option value="action_items">匯出待辦清單</option>
+                    <option value="all">匯出全部摘要</option>
+                </select>
+            </div>
+            <div class="flex items-center gap-2 text-xs text-slate-500">
+                <span id="connection-status" class="flex items-center gap-1">
+                    <span id="conn-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
+                    <span id="conn-text">連線中...</span>
+                </span>
+            </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // ── 初始化 ──────────────────────────────────────
+        lucide.createIcons();
+
+        const socket = io({ transports: ['polling'] });
+        let currentState = 'idle';
+        let mediaRecorder = null;
+        let audioStream = null;
+        let audioContext = null;
+        let processor = null;
+        let isBusy = false; // 防止重複觸發
+        let isRecording = false;
+
+        // ── SocketIO 事件監聽 ───────────────────────────
+
+        socket.on('connect', () => {
+            document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-green-400';
+            document.getElementById('conn-text').textContent = '已連線';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-red-400';
+            document.getElementById('conn-text').textContent = '已斷線';
+        });
+
+        socket.on('state_changed', (data) => {
+            currentState = data.state;
+            updateUI();
+        });
+
+        socket.on('transcript_update', (data) => {
+            addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
+        });
+
+        socket.on('proofread_update', (data) => {
+            updateProofread(data.index, data.proofread);
+        });
+
+        socket.on('summary_result', (data) => {
+            showSummary(data.mode, data.content);
+        });
+
+        socket.on('export_ready', (data) => {
+            if (data.files && Array.isArray(data.files)) {
+                data.files.forEach(file => downloadBlob(file.filename, file.content));
+                return;
+            }
+            downloadBlob(data.filename, data.content);
+        });
+
+        socket.on('error', (data) => {
+            alert(data.message);
+        });
+
+        // ── 主控制邏輯 ─────────────────────────────────
+
+        function mainAction() {
+            if (isBusy) return;
+            switch (currentState) {
+                case 'idle':
+                    startRecording();
+                    break;
+                case 'recording':
+                    pauseRecording();
+                    break;
+                case 'paused':
+                    resumeRecording();
+                    break;
+            }
+        }
+
+        async function startRecording() {
+            if (isBusy) return;
+            isBusy = true;
+
+            const meetingInput = document.getElementById('meeting-name');
+            const meetingName = meetingInput.value.trim();
+            if (!meetingName) {
+                alert('請先輸入會議名稱，再開始錄音。');
+                isBusy = false;
+                return;
+            }
+
+            // 立即禁用按鈕，避免重複點擊觸發多次 getUserMedia
+            const btn = document.getElementById('main-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>取得麥克風...</span>';
+            lucide.createIcons();
+
+            try {
+                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                audioContext = new AudioCtx({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(audioStream);
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                processor.onaudioprocess = (e) => {
+                    if (!isRecording) return;
+                    const input = e.inputBuffer.getChannelData(0);
+                    const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
+                    const pcm16 = floatTo16BitPCM(downsampled);
+                    socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
+                        // console.log('audio_chunk ack:', ack);
+                    });
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                // 若需要儲存錄音檔，啟用 MediaRecorder 並串流到後端
+                const saveAudio = document.getElementById('save-audio').checked;
+                if (saveAudio) {
+                    const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+                        ? 'audio/webm;codecs=opus'
+                        : 'audio/webm';
+                    mediaRecorder = new MediaRecorder(audioStream, { mimeType });
+                    mediaRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) {
+                            e.data.arrayBuffer().then(buf => {
+                                socket.emit('audio_record_chunk', { chunk: buf });
+                            });
+                        }
+                    };
+                    mediaRecorder.onstop = () => {
+                        socket.emit('audio_recording_done');
+                        mediaRecorder = null;
+                    };
+                    mediaRecorder.start(1000);
+                }
+
+                // 先通知伺服器再啟動錄音，確保伺服器已就緒
+                socket.emit('start_recording', {
+                    meeting_name: meetingName,
+                    save_audio: saveAudio,
+                });
+                isRecording = true;
+                meetingInput.disabled = true;
+
+                // 清空逐字稿區域
+                const container = document.getElementById('transcript-container');
+                container.innerHTML = '';
+                // 重置摘要區域
+                document.getElementById('summary-container').innerHTML = `
+                    <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-300 text-center p-10">
+                        <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-10"></i>
+                        <p>錄音結束後，點選上方分頁產生 AI 摘要</p>
+                    </div>
+                `;
+                lucide.createIcons();
+            } catch (err) {
+                alert('無法存取麥克風: ' + err.message);
+                // 還原按鈕狀態
+                currentState = 'idle';
+                updateUI();
+            } finally {
+                isBusy = false;
+                btn.disabled = false;
+            }
+        }
+
+        function pauseRecording() {
+            if (audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+            }
+            isRecording = false;
+            socket.emit('pause_recording');
+        }
+
+        function resumeRecording() {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            isRecording = true;
+            socket.emit('resume_recording');
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            if (audioStream) {
+                audioStream.getTracks().forEach(t => t.stop());
+                audioStream = null;
+            }
+            socket.emit('stop_recording');
+            const meetingInput = document.getElementById('meeting-name');
+            meetingInput.disabled = false;
+        }
+
+        // ── UI 更新 ────────────────────────────────────
+
+        function updateUI() {
+            const btn = document.getElementById('main-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const statusText = document.getElementById('status-text');
+            const statusIcon = document.getElementById('status-icon');
+
+            // 清除動畫 class
+            statusIcon.classList.remove('text-red-500', 'animate-pulse-red', 'text-yellow-500', 'text-purple-500', 'text-slate-400');
+
+            switch (currentState) {
+                case 'idle':
+                    btn.innerHTML = '<i data-lucide="mic" class="w-4 h-4"></i> <span>開始會議</span>';
+                    btn.className = 'flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-6 py-2 rounded-xl transition-all shadow-lg shadow-orange-500/30';
+                    stopBtn.classList.add('hidden');
+                    statusText.textContent = '準備就緒';
+                    statusIcon.classList.add('text-slate-500');
+                    break;
+
+                case 'recording':
+                    btn.innerHTML = '<i data-lucide="pause" class="w-4 h-4"></i> <span>暫停</span>';
+                    btn.className = 'flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-xl transition-all shadow-lg shadow-emerald-500/30';
+                    stopBtn.classList.remove('hidden');
+                    statusText.textContent = '錄音辨識中...';
+                    statusIcon.classList.add('text-emerald-600', 'animate-pulse-red');
+                    break;
+
+                case 'paused':
+                    btn.innerHTML = '<i data-lucide="play" class="w-4 h-4"></i> <span>繼續</span>';
+                    btn.className = 'flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-6 py-2 rounded-xl transition-all shadow-lg shadow-amber-400/30';
+                    stopBtn.classList.remove('hidden');
+                    statusText.textContent = '已暫停';
+                    statusIcon.classList.add('text-yellow-500');
+                    break;
+
+                case 'stopped':
+                    btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>處理中...</span>';
+                    btn.disabled = true;
+                    stopBtn.classList.add('hidden');
+                    statusText.textContent = '正在處理最後音頻...';
+                    statusIcon.classList.add('text-orange-500');
+                    break;
+            }
+
+            btn.disabled = currentState === 'stopped';
+            lucide.createIcons();
+        }
+
+        // ── 逐字稿操作 ─────────────────────────────────
+
+        function addTranscriptLine(index, timestamp, text, speaker) {
+            const container = document.getElementById('transcript-container');
+
+            const div = document.createElement('div');
+            div.id = `line-${index}`;
+            div.className = `flex gap-4 bg-white border-l-3 border-blue-200 rounded-r-lg px-3 py-2`;
+            div.innerHTML = `
+                <span class="text-xs font-mono text-slate-400 mt-0.5 shrink-0">${timestamp}</span>
+                <p class="text-slate-900 leading-relaxed text-sm" id="text-${index}">${escapeHtml(text)}</p>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateProofread(index, proofread) {
+            const textEl = document.getElementById(`text-${index}`);
+            if (textEl) {
+                textEl.textContent = proofread;
+                textEl.parentElement.classList.add('proofread-updated');
+            }
+        }
+
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function downsampleBuffer(buffer, inputRate, outputRate) {
+            if (outputRate === inputRate) return buffer;
+            const ratio = inputRate / outputRate;
+            const newLength = Math.round(buffer.length / ratio);
+            const result = new Float32Array(newLength);
+            let offset = 0;
+            for (let i = 0; i < newLength; i++) {
+                const nextOffset = Math.round((i + 1) * ratio);
+                let sum = 0;
+                let count = 0;
+                for (let j = offset; j < nextOffset && j < buffer.length; j++) {
+                    sum += buffer[j];
+                    count++;
+                }
+                result[i] = count ? sum / count : 0;
+                offset = nextOffset;
+            }
+            return result;
+        }
+
+        function floatTo16BitPCM(float32Array) {
+            const buffer = new ArrayBuffer(float32Array.length * 2);
+            const view = new DataView(buffer);
+            for (let i = 0; i < float32Array.length; i++) {
+                let s = Math.max(-1, Math.min(1, float32Array[i]));
+                view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+            }
+            return new Int16Array(buffer);
+        }
+
+        // ── 摘要操作 ────────────────────────────────────
+
+        function requestSummary(mode) {
+            // 更新 tab 樣式
+            document.querySelectorAll('.summary-tab').forEach(tab => {
+                if (tab.dataset.mode === mode) {
+                    tab.className = tab.className.replace('tab-inactive', 'tab-active');
+                } else {
+                    tab.className = tab.className.replace('tab-active', 'tab-inactive');
+                }
+            });
+
+            // 顯示 loading
+            document.getElementById('summary-container').innerHTML = `
+                <div class="h-full flex flex-col items-center justify-center space-y-4">
+                    <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
+                    <p class="text-orange-600 font-medium animate-pulse">正在調用 Ollama API 進行分析...</p>
+                </div>
+            `;
+
+            socket.emit('request_summary', { mode: mode });
+        }
+
+        const SUMMARY_TITLES = {
+            full: '全文摘要',
+            key_points: '重點條列',
+            action_items: '待辦清單',
+        };
+
+        let summaryCache = {
+            full: null,
+            key_points: null,
+            action_items: null,
+        };
+
+        function requestAllSummaries() {
+            summaryCache = { full: null, key_points: null, action_items: null };
+            renderAllSummarySkeleton();
+            socket.emit('request_summary', { mode: 'full' });
+            socket.emit('request_summary', { mode: 'key_points' });
+            socket.emit('request_summary', { mode: 'action_items' });
+        }
+
+        function showSummary(mode, content) {
+            // 若正在「全部摘要」模式，更新對應區塊
+            const allContainer = document.getElementById('summary-all');
+            if (allContainer) {
+                summaryCache[mode] = content;
+                renderSummaryBox(mode, content);
+                return;
+            }
+
+            // 單一摘要模式
+            const container = document.getElementById('summary-container');
+            container.innerHTML = `
+                <div class="prose prose-sm max-w-none">
+                    <div class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(content)}</div>
+                </div>
+            `;
+        }
+
+        function renderAllSummarySkeleton() {
+            const container = document.getElementById('summary-container');
+            container.innerHTML = `
+                <div id="summary-all" class="space-y-4">
+                    ${renderSummarySkeletonBlock('full')}
+                    ${renderSummarySkeletonBlock('key_points')}
+                    ${renderSummarySkeletonBlock('action_items')}
+                </div>
+            `;
+        }
+
+        function renderSummarySkeletonBlock(mode) {
+            const title = SUMMARY_TITLES[mode] || mode;
+            return `
+                <div id="summary-box-${mode}">
+                    <div class="border border-emerald-100 rounded-lg p-4 bg-white">
+                        <div class="text-sm font-semibold text-slate-900 mb-2">${title}</div>
+                        <div class="w-full h-24 bg-slate-50 rounded animate-pulse"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderSummaryBox(mode, content) {
+            const title = SUMMARY_TITLES[mode] || mode;
+            const box = document.getElementById(`summary-box-${mode}`);
+            const html = `
+                <div class="border border-emerald-100 rounded-lg p-4 bg-white">
+                    <div class="text-sm font-semibold text-slate-900 mb-2">${title}</div>
+                    <div class="bg-slate-50 p-3 rounded border border-emerald-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(content)}</div>
+                </div>
+            `;
+
+            const container = document.getElementById('summary-all');
+            if (!container) return;
+
+            if (box) {
+                box.outerHTML = `<div id="summary-box-${mode}">${html}</div>`;
+            } else {
+                const wrapper = document.createElement('div');
+                wrapper.id = `summary-box-${mode}`;
+                wrapper.innerHTML = html;
+                const ref = document.querySelector(`#summary-all`);
+                ref.appendChild(wrapper);
+            }
+        }
+
+        // ── 匯出操作 ────────────────────────────────────
+
+        function exportMeeting() {
+            const meetingName = document.getElementById('meeting-name').value.trim();
+            socket.emit('export_meeting', { meeting_name: meetingName });
+        }
+
+        function exportSummary() {
+            const meetingName = document.getElementById('meeting-name').value.trim();
+            const mode = document.getElementById('summary-export-mode').value;
+            socket.emit('export_summary', { meeting_name: meetingName, mode: mode });
+        }
+
+        function downloadBlob(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

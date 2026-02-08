@@ -1,0 +1,7 @@
+flask
+flask-socketio
+faster-whisper
+requests
+numpy
+pydub
+audioop-lts
