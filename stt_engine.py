@@ -1,10 +1,16 @@
-"""感知層 - Faster-Whisper STT 引擎，含狀態機管理與說話者分段"""
+"""感知層 - Faster-Whisper / Whisper.cpp STT 引擎，含狀態機管理與說話者分段"""
 
 import threading
 import numpy as np
 from enum import Enum
 from faster_whisper import WhisperModel
+import os
+import wave
+import tempfile
+import subprocess
 
+DEFAULT_WHISPER_CPP_BIN = "/Users/minashih/tools/whisper.cpp/bin/whisper-cli"
+DEFAULT_WHISPER_CPP_MODEL_DIR = "/Users/minashih/models/whisper.cpp"
 
 class State(Enum):
     IDLE = "idle"
@@ -30,25 +36,45 @@ class STTEngine:
     TRANSCRIBE_INTERVAL_MS = 5000  # 每累積 5 秒觸發轉寫
     SAMPLE_RATE = 16000
 
-    def __init__(self, model_size="small"):
+    def __init__(self, model_size="small", engine="faster-whisper"):
         self._lock = threading.Lock()
         self._state = State.IDLE
+        self._model_size = model_size
+        self._engine = engine
         self._pcm_buffer = np.array([], dtype=np.float32)
         self._time_offset_sec = 0.0
         self._speaker_counter = 0
         self._current_speaker = 1
         self._last_segment_end = 0.0  # 上一段結束時間（秒）
         self._locked_language = None
-        print(f"[STT] 載入 Whisper 模型: {model_size} (CPU, int8)...")
-        self._model = WhisperModel(
-            model_size, device="cpu", compute_type="int8"
-        )
-        print("[STT] 模型載入完成")
+        self._load_model(model_size, engine)
 
     @property
     def state(self) -> str:
         with self._lock:
             return self._state.value
+
+    @property
+    def model_size(self) -> str:
+        with self._lock:
+            return self._model_size
+
+    @property
+    def engine(self) -> str:
+        with self._lock:
+            return self._engine
+
+    def set_model(self, engine: str, model_size: str) -> bool:
+        """切換引擎與模型大小（僅限 idle 狀態）。成功回傳 True。"""
+        with self._lock:
+            if self._state != State.IDLE:
+                return False
+            if model_size == self._model_size and engine == self._engine:
+                return True
+            self._model_size = model_size
+            self._engine = engine
+        self._load_model(model_size, engine)
+        return True
 
     def start(self) -> str:
         with self._lock:
@@ -134,6 +160,9 @@ class STTEngine:
             if self._pcm_buffer.size == 0:
                 return []
 
+            if self._engine == "whisper.cpp":
+                return self._transcribe_whisper_cpp()
+
             transcribe_kwargs = {
                 "vad_filter": True,
                 "beam_size": 5,
@@ -181,3 +210,91 @@ class STTEngine:
         if self._pcm_buffer.size == 0:
             return []
         return self._do_transcribe()
+
+    def _load_model(self, model_size: str, engine: str) -> None:
+        if engine == "whisper.cpp":
+            self._whisper_cpp_bin = os.getenv("WHISPER_CPP_BIN", "").strip() or DEFAULT_WHISPER_CPP_BIN
+            self._whisper_cpp_model_dir = os.getenv("WHISPER_CPP_MODEL_DIR", "").strip() or DEFAULT_WHISPER_CPP_MODEL_DIR
+            if not self._whisper_cpp_bin or not os.path.isfile(self._whisper_cpp_bin):
+                raise RuntimeError("WHISPER_CPP_BIN 未設定或檔案不存在")
+            if not self._whisper_cpp_model_dir or not os.path.isdir(self._whisper_cpp_model_dir):
+                raise RuntimeError("WHISPER_CPP_MODEL_DIR 未設定或目錄不存在")
+            self._whisper_cpp_model_path = os.path.join(
+                self._whisper_cpp_model_dir, f"ggml-{model_size}.bin"
+            )
+            if not os.path.isfile(self._whisper_cpp_model_path):
+                raise RuntimeError(f"找不到模型: {self._whisper_cpp_model_path}")
+            print(f"[STT] 使用 Whisper.cpp: {self._whisper_cpp_bin}")
+            print(f"[STT] 模型: {self._whisper_cpp_model_path}")
+            return
+
+        print(f"[STT] 載入 Whisper 模型: {model_size} (CPU, int8)...")
+        self._model = WhisperModel(
+            model_size, device="cpu", compute_type="int8"
+        )
+        print("[STT] 模型載入完成")
+
+    def _transcribe_whisper_cpp(self) -> list[dict]:
+        wav_path = None
+        out_prefix = None
+        temp_dir = None
+        try:
+            pcm16 = (self._pcm_buffer * 32768.0).clip(-32768, 32767).astype(np.int16)
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as wf:
+                wav_path = wf.name
+            with wave.open(wav_path, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(self.SAMPLE_RATE)
+                w.writeframes(pcm16.tobytes())
+
+            temp_dir = tempfile.TemporaryDirectory(prefix="whispercpp_")
+            out_prefix = os.path.join(temp_dir.name, "out")
+            threads = os.getenv("WHISPER_CPP_THREADS", "").strip()
+            cmd = [
+                self._whisper_cpp_bin,
+                "-m", self._whisper_cpp_model_path,
+                "-f", wav_path,
+                "-otxt",
+                "-of", out_prefix,
+                "-l", "auto",
+            ]
+            if threads.isdigit():
+                cmd.extend(["-t", threads])
+            subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            txt_path = f"{out_prefix}.txt"
+            text = ""
+            if os.path.isfile(txt_path):
+                with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
+                    text = f.read().strip()
+
+            seg_start = self._time_offset_sec
+            seg_end = self._time_offset_sec + (self._pcm_buffer.size / self.SAMPLE_RATE)
+            self._time_offset_sec += self._pcm_buffer.size / self.SAMPLE_RATE
+            self._pcm_buffer = np.array([], dtype=np.float32)
+
+            if not text:
+                return []
+            return [{
+                "text": text,
+                "start": seg_start,
+                "end": seg_end,
+                "language": "",
+                "speaker": self._current_speaker,
+            }]
+        except Exception as e:
+            print(f"[STT] Whisper.cpp 轉寫錯誤: {e}")
+            return []
+        finally:
+            for path in (wav_path, f"{out_prefix}.txt" if out_prefix else None):
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            if temp_dir:
+                try:
+                    temp_dir.cleanup()
+                except Exception:
+                    pass

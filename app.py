@@ -17,8 +17,24 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "meeting-assistant-secret"
 socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=10 * 1024 * 1024)
 
+# 可切換的 STT 模型
+AVAILABLE_STT_MODELS = {
+    "whisper_small": {"label": "Whisper Small", "size": "small", "engine": "faster-whisper"},
+    "whisper_medium": {"label": "Whisper Medium", "size": "medium", "engine": "faster-whisper"},
+    "whisper_large": {"label": "Whisper Large", "size": "large", "engine": "faster-whisper"},
+    "faster_whisper_medium": {"label": "Faster-Whisper Medium (多語)", "size": "medium", "engine": "faster-whisper"},
+    "whispercpp_small": {"label": "Whisper.cpp Small", "size": "small", "engine": "whisper.cpp"},
+    "whispercpp_medium": {"label": "Whisper.cpp Medium", "size": "medium", "engine": "whisper.cpp"},
+    "whispercpp_large": {"label": "Whisper.cpp Large", "size": "large", "engine": "whisper.cpp"},
+}
+DEFAULT_STT_MODEL_KEY = "whisper_small"
+
 # 全域 STT 引擎實例
-stt = STTEngine(model_size="small")
+stt = STTEngine(
+    model_size=AVAILABLE_STT_MODELS[DEFAULT_STT_MODEL_KEY]["size"],
+    engine=AVAILABLE_STT_MODELS[DEFAULT_STT_MODEL_KEY]["engine"],
+)
+current_stt_model_key = DEFAULT_STT_MODEL_KEY
 
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
@@ -27,6 +43,54 @@ audio_chunk_count = 0
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
+
+DEFAULT_WHISPER_CPP_BIN = "/Users/minashih/tools/whisper.cpp/bin/whisper-cli"
+DEFAULT_WHISPER_CPP_MODEL_DIR = "/Users/minashih/models/whisper.cpp"
+
+
+def _whisper_cpp_availability() -> tuple[bool, str]:
+    bin_path = os.getenv("WHISPER_CPP_BIN", "").strip() or DEFAULT_WHISPER_CPP_BIN
+    model_dir = os.getenv("WHISPER_CPP_MODEL_DIR", "").strip() or DEFAULT_WHISPER_CPP_MODEL_DIR
+    if not bin_path or not os.path.isfile(bin_path):
+        return False, "WHISPER_CPP_BIN 未設定或檔案不存在"
+    if not model_dir or not os.path.isdir(model_dir):
+        return False, "WHISPER_CPP_MODEL_DIR 未設定或目錄不存在"
+    for size in ("small", "medium", "large"):
+        model_path = os.path.join(model_dir, f"ggml-{size}.bin")
+        if not os.path.isfile(model_path):
+            return False, f"缺少模型檔 ggml-{size}.bin"
+    return True, ""
+
+
+def _model_payload() -> dict:
+    whisper_cpp_ok, whisper_cpp_reason = _whisper_cpp_availability()
+    current = AVAILABLE_STT_MODELS.get(
+        current_stt_model_key, {"label": "Unknown", "size": "small", "engine": "faster-whisper"}
+    )
+    return {
+        "stt_model": {
+            "key": current_stt_model_key,
+            "label": current["label"],
+            "size": current["size"],
+            "engine": current.get("engine", "faster-whisper"),
+        },
+        "stt_models": [
+            {
+                "key": key,
+                "label": item["label"],
+                "size": item["size"],
+                "engine": item.get("engine", "faster-whisper"),
+                "available": (
+                    item.get("engine", "faster-whisper") != "whisper.cpp"
+                    or whisper_cpp_ok
+                ),
+                "reason": (
+                    "" if item.get("engine", "faster-whisper") != "whisper.cpp" else whisper_cpp_reason
+                ),
+            }
+            for key, item in AVAILABLE_STT_MODELS.items()
+        ],
+    }
 
 
 @app.route("/")
@@ -44,7 +108,9 @@ def health():
 @socketio.on("connect")
 def handle_connect():
     ollama_ok = check_health()
-    emit("state_changed", {"state": stt.state, "ollama": ollama_ok})
+    payload = {"state": stt.state, "ollama": ollama_ok}
+    payload.update(_model_payload())
+    emit("state_changed", payload)
 
 
 @socketio.on("start_recording")
@@ -195,6 +261,38 @@ def handle_stop():
         )
 
     socketio.emit("state_changed", {"state": "idle"})
+
+
+@socketio.on("set_stt_model")
+def handle_set_stt_model(data):
+    global current_stt_model_key
+    model_key = ""
+    if isinstance(data, dict):
+        model_key = (data.get("model_key") or "").strip()
+    if model_key not in AVAILABLE_STT_MODELS:
+        emit("error", {"message": "不支援的模型選項"})
+        return
+    if stt.state != "idle":
+        emit("error", {"message": "錄音中無法切換模型，請先停止再切換。"})
+        return
+    whisper_cpp_ok, whisper_cpp_reason = _whisper_cpp_availability()
+    if AVAILABLE_STT_MODELS[model_key].get("engine") == "whisper.cpp" and not whisper_cpp_ok:
+        emit("error", {"message": f"Whisper.cpp 尚未就緒：{whisper_cpp_reason}"})
+        return
+
+    model_size = AVAILABLE_STT_MODELS[model_key]["size"]
+    model_engine = AVAILABLE_STT_MODELS[model_key].get("engine", "faster-whisper")
+    try:
+        ok = stt.set_model(model_engine, model_size)
+    except Exception as e:
+        emit("error", {"message": f"模型切換失敗：{e}"})
+        return
+    if not ok:
+        emit("error", {"message": "目前狀態無法切換模型"})
+        return
+
+    current_stt_model_key = model_key
+    emit("stt_model_changed", _model_payload())
 
 
 @socketio.on("request_summary")

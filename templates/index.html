@@ -109,12 +109,18 @@
             <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop">
                 <div class="flex flex-col h-full">
                 <div class="p-5 border-b border-slate-200 flex flex-col justify-between bg-[var(--soft)] panel-header">
-                    <div class="flex justify-between items-center">
+                    <div class="flex justify-between items-center gap-3">
                         <div class="flex items-center gap-2">
                             <i data-lucide="file-text" class="w-5 h-5 text-orange-500"></i>
                             <h2 class="font-bold text-slate-900">即時逐字稿 (感知層)</h2>
                         </div>
-                        <span class="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-orange-100">Whisper Small</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] text-slate-500 font-semibold uppercase tracking-wider">模型</span>
+                            <span id="stt-engine-badge" class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-slate-200">ENGINE</span>
+                            <select id="stt-model-select" class="bg-white border border-orange-100 text-slate-700 text-xs px-2 py-1 rounded-lg font-semibold tracking-wide focus:outline-none focus:ring-2 focus:ring-orange-200">
+                                <option value="">載入中...</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="summary-toolbar"></div>
                 </div>
@@ -191,6 +197,7 @@
         let processor = null;
         let isBusy = false; // 防止重複觸發
         let isRecording = false;
+        let sttModelKey = null;
 
         // ── SocketIO 事件監聽 ───────────────────────────
 
@@ -206,7 +213,16 @@
 
         socket.on('state_changed', (data) => {
             currentState = data.state;
+            if (data.stt_models) {
+                applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
+            }
             updateUI();
+        });
+
+        socket.on('stt_model_changed', (data) => {
+            if (data.stt_models) {
+                applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
+            }
         });
 
         socket.on('transcript_update', (data) => {
@@ -385,6 +401,7 @@
             const stopBtn = document.getElementById('stop-btn');
             const statusText = document.getElementById('status-text');
             const statusIcon = document.getElementById('status-icon');
+            const modelSelect = document.getElementById('stt-model-select');
 
             // 清除動畫 class
             statusIcon.classList.remove('text-red-500', 'animate-pulse-red', 'text-yellow-500', 'text-purple-500', 'text-slate-400');
@@ -424,6 +441,11 @@
             }
 
             btn.disabled = currentState === 'stopped';
+            if (modelSelect) {
+                modelSelect.disabled = currentState !== 'idle';
+                modelSelect.classList.toggle('opacity-60', currentState !== 'idle');
+                modelSelect.classList.toggle('cursor-not-allowed', currentState !== 'idle');
+            }
             lucide.createIcons();
         }
 
@@ -486,6 +508,54 @@
                 view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
             }
             return new Int16Array(buffer);
+        }
+
+        function applyModelOptions(models, currentKey) {
+            if (!Array.isArray(models)) return;
+            const select = document.getElementById('stt-model-select');
+            const engineBadge = document.getElementById('stt-engine-badge');
+            if (!select) return;
+
+            const previous = sttModelKey;
+            select.innerHTML = '';
+            let currentEngine = '';
+            models.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.key;
+                opt.textContent = item.label + (item.available === false ? ' (未就緒)' : '');
+                if (item.available === false) {
+                    opt.disabled = true;
+                }
+                select.appendChild(opt);
+                if (item.key === currentKey) {
+                    currentEngine = item.engine || '';
+                }
+            });
+
+            if (currentKey) {
+                select.value = currentKey;
+                sttModelKey = currentKey;
+            } else if (previous) {
+                select.value = previous;
+                sttModelKey = previous;
+            } else {
+                sttModelKey = select.value;
+            }
+
+            if (engineBadge) {
+                const display = (currentEngine || '').toLowerCase();
+                if (display) {
+                    engineBadge.textContent = display;
+                    if (display === 'whisper.cpp') {
+                        engineBadge.className = 'text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100';
+                    } else {
+                        engineBadge.className = 'text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-orange-100';
+                    }
+                } else {
+                    engineBadge.textContent = 'ENGINE';
+                    engineBadge.className = 'text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-slate-200';
+                }
+            }
         }
 
         // ── 摘要操作 ────────────────────────────────────
@@ -619,6 +689,21 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+        }
+
+        const modelSelectEl = document.getElementById('stt-model-select');
+        if (modelSelectEl) {
+            modelSelectEl.addEventListener('change', () => {
+                const selectedKey = modelSelectEl.value;
+                if (currentState !== 'idle') {
+                    alert('錄音中無法切換模型，請先停止再切換。');
+                    modelSelectEl.value = sttModelKey || selectedKey;
+                    return;
+                }
+                if (selectedKey && selectedKey !== sttModelKey) {
+                    socket.emit('set_stt_model', { model_key: selectedKey });
+                }
+            });
         }
     </script>
 </body>
