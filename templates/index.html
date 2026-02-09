@@ -30,6 +30,7 @@
         .proofread-updated { border-left: 3px solid #22c55e; padding-left: 8px; transition: all 0.3s; }
         .tab-active { background-color: var(--uni-orange); color: white; box-shadow: 0 8px 20px rgba(243, 107, 33, 0.25); }
         .tab-inactive { background-color: white; color: #475569; border: 1px solid rgba(148,163,184,0.2); }
+        .partial-line { opacity: 0.7; border-left: 3px dashed #f59e0b; }
         .glass {
             background: var(--panel);
             backdrop-filter: blur(10px);
@@ -246,7 +247,18 @@
         });
 
         socket.on('transcript_update', (data) => {
+            clearPartialLine();
             addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
+        });
+
+        socket.on('transcript_partial', (data) => {
+            if (data && data.text) {
+                showPartialLine(data.timestamp || '', data.text);
+            }
+        });
+
+        socket.on('transcript_partial_clear', () => {
+            clearPartialLine();
         });
 
         socket.on('proofread_update', (data) => {
@@ -357,6 +369,7 @@
                 // 清空逐字稿區域
                 const container = document.getElementById('transcript-container');
                 container.innerHTML = '';
+                clearPartialLine();
                 // 重置摘要區域
                 document.getElementById('summary-container').innerHTML = `
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-300 text-center p-10">
@@ -490,6 +503,29 @@
             if (textEl) {
                 textEl.textContent = proofread;
                 textEl.parentElement.classList.add('proofread-updated');
+            }
+        }
+
+        function showPartialLine(timestamp, text) {
+            const container = document.getElementById('transcript-container');
+            let div = document.getElementById('partial-line');
+            if (!div) {
+                div = document.createElement('div');
+                div.id = 'partial-line';
+                div.className = 'flex gap-4 bg-white rounded-r-lg px-3 py-2 partial-line';
+                container.appendChild(div);
+            }
+            div.innerHTML = `
+                <span class="text-xs font-mono text-slate-300 mt-0.5 shrink-0">${timestamp}</span>
+                <p class="text-slate-600 leading-relaxed text-sm">${escapeHtml(text)}</p>
+            `;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearPartialLine() {
+            const div = document.getElementById('partial-line');
+            if (div && div.parentElement) {
+                div.parentElement.removeChild(div);
             }
         }
 

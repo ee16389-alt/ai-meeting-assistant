@@ -34,6 +34,8 @@ SPEAKER_GAP_THRESHOLD = 1.5
 
 class STTEngine:
     TRANSCRIBE_INTERVAL_MS = 5000  # 每累積 5 秒觸發轉寫
+    PARTIAL_INTERVAL_MS = 1000     # partial 更新頻率
+    PARTIAL_WINDOW_MS = 2000       # partial 轉寫視窗大小
     SAMPLE_RATE = 16000
 
     def __init__(self, model_size="small", engine="faster-whisper"):
@@ -47,6 +49,7 @@ class STTEngine:
         self._current_speaker = 1
         self._last_segment_end = 0.0  # 上一段結束時間（秒）
         self._locked_language = None
+        self._last_partial_emit_sec = 0.0
         self._load_model(model_size, engine)
 
     @property
@@ -86,6 +89,7 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._locked_language = None
+            self._last_partial_emit_sec = 0.0
             self._state = State.RECORDING
             return self._state.value
 
@@ -121,21 +125,27 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._locked_language = None
+            self._last_partial_emit_sec = 0.0
             self._state = State.IDLE
 
-    def feed_audio(self, chunk: bytes) -> list[dict]:
-        """接收 16kHz PCM int16 chunk，累積後觸發轉寫。回傳轉寫結果列表。"""
+    def feed_audio(self, chunk: bytes) -> dict:
+        """接收 16kHz PCM int16 chunk，累積後觸發轉寫。回傳 final/partial。"""
         with self._lock:
             if self._state != State.RECORDING:
-                return []
+                return {"final": [], "partial": ""}
 
             self._append_pcm_chunk(chunk)
             total_duration_ms = self._get_buffer_duration_ms()
 
-            if total_duration_ms < self.TRANSCRIBE_INTERVAL_MS:
-                return []
+            partial_text = ""
+            if total_duration_ms >= self.PARTIAL_INTERVAL_MS:
+                partial_text = self._maybe_partial()
 
-            return self._do_transcribe()
+            if total_duration_ms < self.TRANSCRIBE_INTERVAL_MS:
+                return {"final": [], "partial": partial_text}
+
+            final_segments = self._do_transcribe()
+            return {"final": final_segments, "partial": ""}
 
     def _get_buffer_duration_ms(self) -> int:
         """估算緩衝區音頻時長（毫秒）"""
@@ -210,6 +220,39 @@ class STTEngine:
         if self._pcm_buffer.size == 0:
             return []
         return self._do_transcribe()
+
+    def _maybe_partial(self) -> str:
+        """低延遲 partial 轉寫（不清空 buffer）。"""
+        if self._engine == "whisper.cpp":
+            return ""
+        total_sec = self._pcm_buffer.size / self.SAMPLE_RATE
+        if total_sec - self._last_partial_emit_sec < (self.PARTIAL_INTERVAL_MS / 1000.0):
+            return ""
+        window_samples = int((self.PARTIAL_WINDOW_MS / 1000.0) * self.SAMPLE_RATE)
+        if window_samples <= 0:
+            return ""
+        window = self._pcm_buffer[-window_samples:] if self._pcm_buffer.size > window_samples else self._pcm_buffer
+
+        try:
+            transcribe_kwargs = {
+                "vad_filter": True,
+                "beam_size": 3,
+            }
+            if self._locked_language:
+                transcribe_kwargs["language"] = self._locked_language
+
+            segments, info = self._model.transcribe(window, **transcribe_kwargs)
+            text_parts = []
+            if not self._locked_language and info.language and info.language != "ko":
+                self._locked_language = "zh"
+            for seg in segments:
+                text = seg.text.strip()
+                if text and not any(phrase in text for phrase in PROMPT_ECHO_PHRASES):
+                    text_parts.append(text)
+            self._last_partial_emit_sec = total_sec
+            return " ".join(text_parts).strip()
+        except Exception:
+            return ""
 
     def _load_model(self, model_size: str, engine: str) -> None:
         if engine == "whisper.cpp":

@@ -171,7 +171,20 @@ def handle_audio_chunk(data):
     audio_chunk_count += 1
     print(f"[STT] 收到音訊 chunk: {size} bytes (count={audio_chunk_count})", flush=True)
 
-    segments = stt.feed_audio(chunk)
+    result = stt.feed_audio(chunk)
+    partial_text = ""
+    if isinstance(result, dict):
+        partial_text = result.get("partial", "") or ""
+        segments = result.get("final", []) or []
+    else:
+        segments = result
+    if partial_text:
+        emit("transcript_partial", {
+            "text": partial_text,
+            "timestamp": time.strftime("%H:%M:%S"),
+        })
+    if segments:
+        emit("transcript_partial_clear")
     for seg in segments:
         line = {
             "index": len(transcript_lines),
@@ -244,6 +257,8 @@ def handle_resume():
 def handle_stop():
     handle_audio_recording_done()
     state, final_segments = stt.stop()
+    if final_segments:
+        socketio.emit("transcript_partial_clear")
     for seg in final_segments:
         line = {
             "index": len(transcript_lines),
