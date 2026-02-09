@@ -63,9 +63,26 @@
                 0 8px 16px rgba(16, 24, 40, 0.04);
         }
         .pill { border-radius: 999px; }
+        .toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 50;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(243, 107, 33, 0.25);
+            color: #1f2937;
+            padding: 10px 14px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+            display: none;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .toast.show { display: block; }
     </style>
 </head>
 <body class="grid-glow font-sans text-slate-900 p-4 md:p-8">
+    <div id="toast" class="toast"></div>
     <div class="max-w-7xl mx-auto">
 
         <!-- HEADER -->
@@ -222,6 +239,9 @@
         socket.on('stt_model_changed', (data) => {
             if (data.stt_models) {
                 applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
+            }
+            if (data.stt_model && data.stt_model.label) {
+                showToast(`模型已切換：${data.stt_model.label}`);
             }
         });
 
@@ -689,6 +709,18 @@
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+        }
+
+        let toastTimer = null;
+        function showToast(message) {
+            const el = document.getElementById('toast');
+            if (!el) return;
+            el.textContent = message;
+            el.classList.add('show');
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                el.classList.remove('show');
+            }, 2200);
         }
 
         const modelSelectEl = document.getElementById('stt-model-select');
