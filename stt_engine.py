@@ -38,11 +38,12 @@ class STTEngine:
     PARTIAL_WINDOW_MS = 2000       # partial 轉寫視窗大小
     SAMPLE_RATE = 16000
 
-    def __init__(self, model_size="small", engine="faster-whisper"):
+    def __init__(self, model_size="small", engine="faster-whisper", model_id: str | None = None):
         self._lock = threading.Lock()
         self._state = State.IDLE
         self._model_size = model_size
         self._engine = engine
+        self._model_id = model_id or model_size
         self._pcm_buffer = np.array([], dtype=np.float32)
         self._time_offset_sec = 0.0
         self._speaker_counter = 0
@@ -50,7 +51,7 @@ class STTEngine:
         self._last_segment_end = 0.0  # 上一段結束時間（秒）
         self._locked_language = None
         self._last_partial_emit_sec = 0.0
-        self._load_model(model_size, engine)
+        self._load_model(model_size, engine, model_id=self._model_id)
 
     @property
     def state(self) -> str:
@@ -67,16 +68,17 @@ class STTEngine:
         with self._lock:
             return self._engine
 
-    def set_model(self, engine: str, model_size: str) -> bool:
+    def set_model(self, engine: str, model_size: str, model_id: str | None = None) -> bool:
         """切換引擎與模型大小（僅限 idle 狀態）。成功回傳 True。"""
         with self._lock:
             if self._state != State.IDLE:
                 return False
-            if model_size == self._model_size and engine == self._engine:
+            if model_size == self._model_size and engine == self._engine and (model_id or model_size) == self._model_id:
                 return True
             self._model_size = model_size
             self._engine = engine
-        self._load_model(model_size, engine)
+            self._model_id = model_id or model_size
+        self._load_model(model_size, engine, model_id=self._model_id)
         return True
 
     def start(self) -> str:
@@ -254,8 +256,9 @@ class STTEngine:
         except Exception:
             return ""
 
-    def _load_model(self, model_size: str, engine: str) -> None:
+    def _load_model(self, model_size: str, engine: str, model_id: str | None = None) -> None:
         if engine == "whisper.cpp":
+            model_id = model_id or model_size
             self._whisper_cpp_bin = os.getenv("WHISPER_CPP_BIN", "").strip() or DEFAULT_WHISPER_CPP_BIN
             self._whisper_cpp_model_dir = os.getenv("WHISPER_CPP_MODEL_DIR", "").strip() or DEFAULT_WHISPER_CPP_MODEL_DIR
             if not self._whisper_cpp_bin or not os.path.isfile(self._whisper_cpp_bin):
@@ -263,7 +266,7 @@ class STTEngine:
             if not self._whisper_cpp_model_dir or not os.path.isdir(self._whisper_cpp_model_dir):
                 raise RuntimeError("WHISPER_CPP_MODEL_DIR 未設定或目錄不存在")
             self._whisper_cpp_model_path = os.path.join(
-                self._whisper_cpp_model_dir, f"ggml-{model_size}.bin"
+                self._whisper_cpp_model_dir, f"ggml-{model_id}.bin"
             )
             if not os.path.isfile(self._whisper_cpp_model_path):
                 raise RuntimeError(f"找不到模型: {self._whisper_cpp_model_path}")

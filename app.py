@@ -23,9 +23,9 @@ AVAILABLE_STT_MODELS = {
     "whisper_medium": {"label": "Whisper Medium", "size": "medium", "engine": "faster-whisper"},
     "whisper_large": {"label": "Whisper Large", "size": "large", "engine": "faster-whisper"},
     "faster_whisper_medium": {"label": "Faster-Whisper Medium (多語)", "size": "medium", "engine": "faster-whisper"},
-    "whispercpp_small": {"label": "Whisper.cpp Small", "size": "small", "engine": "whisper.cpp"},
-    "whispercpp_medium": {"label": "Whisper.cpp Medium", "size": "medium", "engine": "whisper.cpp"},
-    "whispercpp_large": {"label": "Whisper.cpp Large", "size": "large", "engine": "whisper.cpp"},
+    "whispercpp_small": {"label": "Whisper.cpp Small", "size": "small", "engine": "whisper.cpp", "model_id": "small"},
+    "whispercpp_medium": {"label": "Whisper.cpp Medium", "size": "medium", "engine": "whisper.cpp", "model_id": "medium"},
+    "whispercpp_large": {"label": "Whisper.cpp Large-v3", "size": "large-v3", "engine": "whisper.cpp", "model_id": "large-v3"},
 }
 DEFAULT_STT_MODEL_KEY = "whisper_small"
 
@@ -33,6 +33,7 @@ DEFAULT_STT_MODEL_KEY = "whisper_small"
 stt = STTEngine(
     model_size=AVAILABLE_STT_MODELS[DEFAULT_STT_MODEL_KEY]["size"],
     engine=AVAILABLE_STT_MODELS[DEFAULT_STT_MODEL_KEY]["engine"],
+    model_id=AVAILABLE_STT_MODELS[DEFAULT_STT_MODEL_KEY].get("model_id"),
 )
 current_stt_model_key = DEFAULT_STT_MODEL_KEY
 
@@ -55,7 +56,7 @@ def _whisper_cpp_availability() -> tuple[bool, str]:
         return False, "WHISPER_CPP_BIN 未設定或檔案不存在"
     if not model_dir or not os.path.isdir(model_dir):
         return False, "WHISPER_CPP_MODEL_DIR 未設定或目錄不存在"
-    for size in ("small", "medium", "large"):
+    for size in ("small", "medium", "large-v3"):
         model_path = os.path.join(model_dir, f"ggml-{size}.bin")
         if not os.path.isfile(model_path):
             return False, f"缺少模型檔 ggml-{size}.bin"
@@ -80,6 +81,7 @@ def _model_payload() -> dict:
                 "label": item["label"],
                 "size": item["size"],
                 "engine": item.get("engine", "faster-whisper"),
+                "model_id": item.get("model_id", item["size"]),
                 "available": (
                     item.get("engine", "faster-whisper") != "whisper.cpp"
                     or whisper_cpp_ok
@@ -297,8 +299,9 @@ def handle_set_stt_model(data):
 
     model_size = AVAILABLE_STT_MODELS[model_key]["size"]
     model_engine = AVAILABLE_STT_MODELS[model_key].get("engine", "faster-whisper")
+    model_id = AVAILABLE_STT_MODELS[model_key].get("model_id", model_size)
     try:
-        ok = stt.set_model(model_engine, model_size)
+        ok = stt.set_model(model_engine, model_size, model_id=model_id)
     except Exception as e:
         emit("error", {"message": f"模型切換失敗：{e}"})
         return
