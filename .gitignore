@@ -3,15 +3,30 @@ __pycache__/
 venv/
 .venv/
 .venv-build/
+.venv310/
+.venv311/
 
 download/
 exports/
 *.bin
 *.pt
 *.pth
+*.gguf
+
+build/
+dist/
+models/
+static/
+third_party/
 
 desktop/dist/
 desktop/backend/
 desktop/node_modules/
+desktop/models/
+desktop/ollama-models/
+desktop/package-lock.json
+
+ai_meeting_backend.spec
 
 *.log
+.DS_Store

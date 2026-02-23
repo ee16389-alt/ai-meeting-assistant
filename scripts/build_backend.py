@@ -26,7 +26,11 @@ def main():
         "--clean",
         "--onefile",
         "--name", "ai_meeting_backend",
+        "--hidden-import", "engineio.async_drivers.threading",
+        "--hidden-import", "socketio.async_drivers.threading",
         "--add-data", "templates:templates",
+        "--add-data", "static:static",
+        "--add-data", "models/sherpa-onnx:models/sherpa-onnx",
         "app.py",
     ])
 

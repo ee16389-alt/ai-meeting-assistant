@@ -5,7 +5,8 @@
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
-    "build:mac": "electron-builder --mac dmg"
+    "build:mac": "electron-builder --mac dmg",
+    "build:win": "electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "electron": "^30.0.0",
@@ -16,6 +17,29 @@
     "productName": "AI Meeting Assistant",
     "files": [
       "**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "models/llm",
+        "to": "models/llm",
+        "filter": [
+          "*.gguf"
+        ]
+      },
+      {
+        "from": "ollama-models",
+        "to": "ollama-models",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "mac": {
       "category": "public.app-category.productivity",
