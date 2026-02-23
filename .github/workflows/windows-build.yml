@@ -31,6 +31,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+          python -m pip install gdown
           python -m pip install pyinstaller
 
       - name: Download models
@@ -42,11 +43,11 @@ jobs:
           $gguf = "${{ inputs.gguf_url }}"
           $sherpaZip = "${{ inputs.sherpa_zip_url }}"
 
-          Write-Host "Downloading GGUF..."
-          Invoke-WebRequest -Uri $gguf -OutFile models\llm\model.gguf
+          Write-Host "Downloading GGUF via gdown..."
+          python -m gdown --fuzzy "$gguf" -O models\llm\model.gguf
 
-          Write-Host "Downloading sherpa-onnx zip..."
-          Invoke-WebRequest -Uri $sherpaZip -OutFile models\sherpa-onnx.zip
+          Write-Host "Downloading sherpa-onnx zip via gdown..."
+          python -m gdown --fuzzy "$sherpaZip" -O models\sherpa-onnx.zip
           Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
 
       - name: Prepare desktop assets
