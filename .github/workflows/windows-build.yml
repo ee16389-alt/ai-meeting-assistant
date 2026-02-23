@@ -44,7 +44,7 @@ jobs:
           $sherpaZip = "${{ inputs.sherpa_zip_url }}"
 
           Write-Host "Downloading GGUF via gdown..."
-          python -m gdown --fuzzy "$gguf" -O models\llm\model.gguf
+          python -m gdown --fuzzy "$gguf" -O models\llm\qwen2.5-1.5b-instruct-q5_k_m.gguf
 
           Write-Host "Downloading sherpa-onnx zip via gdown..."
           python -m gdown --fuzzy "$sherpaZip" -O models\sherpa-onnx.zip
