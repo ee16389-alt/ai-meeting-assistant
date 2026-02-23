@@ -8,7 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 OUT_DIR = ROOT / "desktop" / "backend"
-OUT_BIN = OUT_DIR / "ai_meeting_backend"
+EXE_SUFFIX = ".exe" if os.name == "nt" else ""
+OUT_BIN = OUT_DIR / f"ai_meeting_backend{EXE_SUFFIX}"
 DATA_SEP = os.pathsep
 
 
@@ -46,7 +47,7 @@ def main():
     add_data_arg(cmd, "models/sherpa-onnx", "models/sherpa-onnx")
     run(cmd)
 
-    built = DIST / "ai_meeting_backend"
+    built = DIST / f"ai_meeting_backend{EXE_SUFFIX}"
     if not built.exists():
         raise SystemExit("build failed: backend binary not found")
     shutil.copy2(built, OUT_BIN)
