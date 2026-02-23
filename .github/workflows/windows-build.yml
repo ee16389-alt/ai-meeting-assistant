@@ -34,17 +34,22 @@ jobs:
           python -m pip install gdown
           python -m pip install pyinstaller
 
+      - name: Install NSIS
+        run: choco install nsis -y
+
       - name: Download models
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path models\llm | Out-Null
           New-Item -ItemType Directory -Force -Path models\sherpa-onnx | Out-Null
 
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
           $gguf = "${{ inputs.gguf_url }}"
           $sherpaZip = "${{ inputs.sherpa_zip_url }}"
+          $ggufFilename = $cfg.ggufFilename
 
           Write-Host "Downloading GGUF via gdown..."
-          python -m gdown --fuzzy "$gguf" -O models\llm\qwen2.5-1.5b-instruct-q5_k_m.gguf
+          python -m gdown --fuzzy "$gguf" -O "models\llm\$ggufFilename"
 
           Write-Host "Downloading sherpa-onnx zip via gdown..."
           python -m gdown --fuzzy "$sherpaZip" -O models\sherpa-onnx.zip
@@ -54,9 +59,25 @@ jobs:
         run: |
           python scripts\prepare_desktop_assets.py
 
+      - name: Build model installer
+        run: |
+          python scripts\build_windows_model_installer.py
+
       - name: Build backend
         run: |
           python scripts\build_backend.py
+
+      - name: Remove GGUF from main app package (separate model installer)
+        shell: pwsh
+        run: |
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $ggufPath = "desktop\models\llm\$($cfg.ggufFilename)"
+          if (Test-Path $ggufPath) {
+            Remove-Item $ggufPath -Force
+            Write-Host "Removed bundled GGUF from desktop app package: $ggufPath"
+          } else {
+            Write-Host "No GGUF found to remove: $ggufPath"
+          }
 
       - name: Build Windows installer
         run: |
@@ -64,8 +85,14 @@ jobs:
           npm install
           npm run build:win
 
-      - name: Upload artifacts
+      - name: Upload main installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
           path: desktop\dist\AI Meeting Assistant Setup *.exe
+
+      - name: Upload model installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-model-installer
+          path: desktop\dist-model\*.exe

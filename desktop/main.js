@@ -1,16 +1,102 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
 const { ensureOllama, ensureModel } = require("./ollama");
 const http = require("http");
+const modelPackConfig = require("./model_pack_config.json");
 
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const SUMMARY_ENGINE = (process.env.SUMMARY_ENGINE || "llama_cpp").trim().toLowerCase();
-const DEFAULT_GGUF = "qwen2.5-1.5b-instruct-q5_k_m.gguf";
+const DEFAULT_GGUF = modelPackConfig.ggufFilename;
+const MODEL_VERSION_LABEL = modelPackConfig.versionLabel;
+const MODEL_INSTALLER_FILENAME = modelPackConfig.installerFilename;
+const MODEL_PACK_DOWNLOAD_URL = "https://github.com/ee16389-alt/ai-meeting-assistant/releases";
+const BACKEND_BIN_NAME = process.platform === "win32" ? "ai_meeting_backend.exe" : "ai_meeting_backend";
 
 let backendProcess = null;
+
+function getManagedModelDir() {
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local");
+    return path.join(localAppData, "AI Meeting Assistant", "models", "llm");
+  }
+  return path.join(app.getPath("userData"), "models", "llm");
+}
+
+function findModelInSelectedDirectory(selectedDir) {
+  const direct = path.join(selectedDir, DEFAULT_GGUF);
+  if (fs.existsSync(direct)) {
+    return direct;
+  }
+  const llmSubdir = path.join(selectedDir, "models", "llm", DEFAULT_GGUF);
+  if (fs.existsSync(llmSubdir)) {
+    return llmSubdir;
+  }
+  return null;
+}
+
+function promptForModelPath(candidates) {
+  while (true) {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      buttons: ["選擇模型資料夾", "開啟模型包下載頁", "結束"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "缺少摘要模型",
+      message: "找不到內建摘要模型",
+      detail:
+        `支援模型版本：${MODEL_VERSION_LABEL}\n` +
+        `預期檔名：${DEFAULT_GGUF}\n` +
+        `建議安裝模型包：${MODEL_INSTALLER_FILENAME}\n\n` +
+        "已檢查路徑：\n" +
+        candidates.map((p) => `- ${p}`).join("\n"),
+    });
+
+    if (choice === 0) {
+      const picked = dialog.showOpenDialogSync({
+        title: "選擇模型資料夾（包含 GGUF 檔）",
+        properties: ["openDirectory"],
+      });
+      if (!picked || picked.length === 0) {
+        continue;
+      }
+      const found = findModelInSelectedDirectory(picked[0]);
+      if (found) {
+        return found;
+      }
+      dialog.showErrorBox(
+        "模型版本不符或檔名錯誤",
+        `在所選資料夾中找不到 ${DEFAULT_GGUF}。\n請安裝對應版本模型包（${MODEL_VERSION_LABEL}）。`
+      );
+      continue;
+    }
+
+    if (choice === 1) {
+      shell.openExternal(MODEL_PACK_DOWNLOAD_URL);
+      continue;
+    }
+
+    return null;
+  }
+}
+
+function resolveProductionModelPath() {
+  const envModelPath = (process.env.LLM_MODEL_PATH || "").trim();
+  const packagedModelPath = path.join(process.resourcesPath, "models", "llm", DEFAULT_GGUF);
+  const managedModelPath = path.join(getManagedModelDir(), DEFAULT_GGUF);
+  const candidates = [envModelPath, packagedModelPath, managedModelPath].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return promptForModelPath(candidates);
+}
 
 function waitForServer(url, timeoutMs = 30000) {
   const start = Date.now();
@@ -39,7 +125,7 @@ function waitForServer(url, timeoutMs = 30000) {
 function startBackend() {
   const isProd = app.isPackaged;
   if (isProd) {
-    const backendPath = path.join(process.resourcesPath, "backend", "ai_meeting_backend");
+    const backendPath = path.join(process.resourcesPath, "backend", BACKEND_BIN_NAME);
     if (!fs.existsSync(backendPath)) {
       dialog.showErrorBox(
         "安裝包缺少後端",
@@ -48,13 +134,13 @@ function startBackend() {
       app.quit();
       return;
     }
-    const packagedModelPath = path.join(process.resourcesPath, "models", "llm", DEFAULT_GGUF);
-    const modelPath = (process.env.LLM_MODEL_PATH || packagedModelPath).trim();
-    if (!fs.existsSync(modelPath)) {
-      dialog.showErrorBox(
-        "安裝包缺少摘要模型",
-        `找不到 GGUF 模型檔：${modelPath}\n請重新打包，並確認 models/llm/${DEFAULT_GGUF} 存在。`
-      );
+    const modelPath = resolveProductionModelPath();
+    if (!modelPath || !fs.existsSync(modelPath)) {
+      if (!modelPath) {
+        app.quit();
+        return;
+      }
+      dialog.showErrorBox("安裝包缺少摘要模型", `找不到 GGUF 模型檔：${modelPath}`);
       app.quit();
       return;
     }
