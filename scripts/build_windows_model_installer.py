@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,7 +19,30 @@ OUT_DIR = ROOT / "desktop" / "dist-model"
 
 def load_config() -> dict[str, str]:
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
-      return json.load(f)
+        return json.load(f)
+
+
+def resolve_makensis() -> str | None:
+    found = shutil.which("makensis")
+    if found:
+        return found
+
+    candidates = []
+    for env_var in ("ProgramFiles(x86)", "ProgramFiles"):
+        base = os.environ.get(env_var)
+        if base:
+            candidates.append(Path(base) / "NSIS" / "makensis.exe")
+
+    candidates.extend(
+        [
+            Path(r"C:\Program Files (x86)\NSIS\makensis.exe"),
+            Path(r"C:\Program Files\NSIS\makensis.exe"),
+        ]
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 def main() -> int:
@@ -33,7 +57,7 @@ def main() -> int:
     if not NSI_SCRIPT.exists():
         raise SystemExit(f"missing NSIS script: {NSI_SCRIPT}")
 
-    makensis = shutil.which("makensis")
+    makensis = resolve_makensis()
     if not makensis:
         raise SystemExit("makensis not found. Please install NSIS and ensure it is on PATH.")
 
