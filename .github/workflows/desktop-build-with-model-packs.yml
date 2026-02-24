@@ -51,6 +51,32 @@ jobs:
           python3 -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models/llm/${GGUF_FILENAME}"
           python3 -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models/sherpa-onnx.zip
           unzip -oq models/sherpa-onnx.zip -d models/sherpa-onnx
+          python3 - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          cfg = json.loads(Path("desktop/model_pack_config.json").read_text(encoding="utf-8"))
+          root = Path("models/sherpa-onnx")
+          expected = root / cfg["sherpaModelDirName"]
+          if expected.is_dir():
+              print(f"Sherpa layout OK: {expected}")
+              raise SystemExit(0)
+
+          matches = [p for p in root.rglob(cfg["sherpaModelDirName"]) if p.is_dir()]
+          if len(matches) == 1:
+              src = matches[0]
+              expected.parent.mkdir(parents=True, exist_ok=True)
+              if expected.exists():
+                  shutil.rmtree(expected)
+              shutil.move(str(src), str(expected))
+              print(f"Normalized Sherpa dir: {src} -> {expected}")
+          else:
+              print("Could not uniquely locate expected Sherpa model dir.")
+              print("Top-level entries under models/sherpa-onnx:")
+              for p in sorted(root.iterdir()):
+                  print(f" - {p.name}")
+          PY
 
       - name: Validate downloaded model structure
         run: |
@@ -172,6 +198,21 @@ jobs:
           python -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models\llm\$ggufFilename"
           python -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models\sherpa-onnx.zip
           Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
+
+          $expectedName = $cfg.sherpaModelDirName
+          $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
+          if (-not (Test-Path $expectedDir)) {
+            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse | Where-Object { $_.Name -eq $expectedName }
+            if ($matches.Count -eq 1) {
+              $src = $matches[0].FullName
+              Move-Item -Path $src -Destination $expectedDir -Force
+              Write-Host "Normalized Sherpa dir: $src -> $expectedDir"
+            } else {
+              Write-Host "Could not uniquely locate expected Sherpa model dir."
+              Write-Host "Top-level entries under models\\sherpa-onnx:"
+              Get-ChildItem -Path "models\sherpa-onnx" | ForEach-Object { Write-Host " - $($_.Name)" }
+            }
+          }
 
       - name: Validate downloaded model structure
         shell: pwsh
