@@ -24,7 +24,6 @@ desktop/backend/
 desktop/node_modules/
 desktop/models/
 desktop/ollama-models/
-desktop/package-lock.json
 
 ai_meeting_backend.spec
 
