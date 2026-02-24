@@ -5,47 +5,14 @@
   "main": "main.js",
   "scripts": {
     "dev": "electron .",
-    "build:mac": "electron-builder --mac dmg",
-    "build:win": "electron-builder --win nsis --x64"
+    "build:mac": "electron-builder --config electron-builder.config.js --mac dmg",
+    "build:win": "electron-builder --config electron-builder.config.js --win nsis --x64",
+    "build:mac:bundle-gguf": "BUNDLE_GGUF=1 electron-builder --config electron-builder.config.js --mac dmg",
+    "build:mac:bundle-ollama": "BUNDLE_OLLAMA_MODELS=1 electron-builder --config electron-builder.config.js --mac dmg",
+    "build:mac:bundle-all": "BUNDLE_GGUF=1 BUNDLE_OLLAMA_MODELS=1 electron-builder --config electron-builder.config.js --mac dmg"
   },
   "devDependencies": {
     "electron": "^30.0.0",
     "electron-builder": "^24.13.3"
-  },
-  "build": {
-    "appId": "com.minashih.ai-meeting-assistant",
-    "productName": "AI Meeting Assistant",
-    "files": [
-      "**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "models/llm",
-        "to": "models/llm",
-        "filter": [
-          "*.gguf"
-        ]
-      },
-      {
-        "from": "ollama-models",
-        "to": "ollama-models",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ],
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": [
-        "dmg"
-      ]
-    }
   }
 }

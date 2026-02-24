@@ -44,7 +44,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b").strip() or "qwen2.5:1.5
 
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "320"))
-LLAMA_CTX = int(os.getenv("LLAMA_CTX", "4096"))
+LLAMA_CTX = int(os.getenv("LLAMA_CTX", "3072"))
 LLAMA_THREADS = int(os.getenv("LLAMA_THREADS", str(max(2, (os.cpu_count() or 4) // 2))))
 LLAMA_GPU_LAYERS = int(os.getenv("LLAMA_GPU_LAYERS", "-1"))
 

@@ -2,16 +2,29 @@
 
 This is a desktop wrapper that starts the Flask backend and opens a desktop window.
 By default, Ollama model is not bundled and will be pulled on first run.
-You can optionally bundle Ollama model files into installer (see section below).
+By default, GGUF and Ollama model files are not bundled into the installer to keep DMG size smaller.
+You can optionally bundle model files into installer (see section below).
 
 ## Bundle Models Into Installer (optional)
-- STT model (Sherpa) is bundled into backend binary by `scripts/build_backend.py`.
+- `ollama-models` is only used when running desktop app with `SUMMARY_ENGINE=ollama`.
+- In default mode (`SUMMARY_ENGINE=llama_cpp`), the app does not need `ollama-models`.
+- Sherpa-ONNX is not embedded into backend by default (to reduce backend size). The app expects an external model pack.
 - Ollama model can be bundled before packaging:
   1. Ensure target model already exists in local Ollama:
      - `ollama pull qwen2.5:1.5b`
   2. From project root, export model files into `desktop/ollama-models`:
      - `python3 scripts/prepare_ollama_bundle.py --model qwen2.5:1.5b`
-  3. Then build desktop installer as usual.
+  3. Build with bundled Ollama model:
+     - `cd desktop && npm run build:mac:bundle-ollama`
+
+- To bundle GGUF into DMG (larger installer):
+  1. Prepare assets:
+     - `python scripts/prepare_desktop_assets.py`
+  2. Build:
+     - `cd desktop && npm run build:mac:bundle-gguf`
+
+- To bundle everything (largest installer):
+  - `cd desktop && npm run build:mac:bundle-all`
 
 At first launch, app will try to import bundled model files into local Ollama store first.
 If bundled files are missing or invalid, it falls back to `ollama pull`.
@@ -28,9 +41,9 @@ If bundled files are missing or invalid, it falls back to `ollama pull`.
      - `source .venv-build/bin/activate`
      - `pip install -r requirements.txt`
      - `pip install pyinstaller`
-     - `python scripts/build_backend.py`
+      - `python scripts/build_backend.py`
    - Output:
-     - `desktop/backend/ai_meeting_backend`
+     - `desktop/backend/ai_meeting_backend` (plus `_internal/` in default `onedir` mode)
 2. `cd desktop`
 3. `npm run build:mac`
 
@@ -42,4 +55,5 @@ If bundled files are missing or invalid, it falls back to `ollama pull`.
 ## Notes
 - In dev mode, it runs `python3 app.py` from the project root.
 - In production, it expects the backend binary in `resources/backend/ai_meeting_backend`.
-- First launch will auto-install Ollama (with admin prompt) and pull models.
+- First launch auto-installs/pulls Ollama models only when `SUMMARY_ENGINE=ollama`.
+- Default backend build is `onedir` + `EMBED_SHERPA_ONNX=0` to reduce installer size. Override with env vars if needed.

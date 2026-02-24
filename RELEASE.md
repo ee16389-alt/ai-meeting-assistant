@@ -1,9 +1,7 @@
 # Release Guide (Offline DMG/EXE)
 
-This guide builds fully offline installers that bundle:
-- Backend binary (ai_meeting_backend)
-- STT model (sherpa-onnx)
-- LLM model (GGUF)
+This guide describes packaging outputs and model distribution options.
+Default packaging now favors a smaller installer by not bundling GGUF/Ollama model assets into the DMG.
 
 ## Release Metadata
 <!-- RELEASE_METADATA_START -->
@@ -23,8 +21,8 @@ This guide builds fully offline installers that bundle:
 - Python venv for build: `.venv-build`
 - Node/Electron build tools installed
 
-## 1) Prepare LLM Assets
-Copy GGUF models into the desktop packaging folder.
+## 1) Optional: Prepare LLM Assets (Bundled GGUF Variant)
+Copy GGUF models into the desktop packaging folder only if you want a larger DMG that includes GGUF.
 
 ```bash
 cd /Users/minashih/ai-gent
@@ -35,7 +33,7 @@ Expected:
 - `desktop/models/llm/*.gguf`
 
 ## 2) Build Backend Binary
-This bundles templates/static/sherpa-onnx into a single backend executable.
+Default backend build is `onedir` and does not embed Sherpa-ONNX (`EMBED_SHERPA_ONNX=0`), which reduces package size.
 
 ```bash
 cd /Users/minashih/ai-gent
@@ -44,7 +42,7 @@ python scripts/build_backend.py
 ```
 
 Expected:
-- `desktop/backend/ai_meeting_backend`
+- `desktop/backend/ai_meeting_backend` (plus `_internal/` in default `onedir` mode)
 
 ## 3) Build macOS DMG
 
@@ -58,13 +56,8 @@ Expected:
 
 ## 4) Install & Verify (Clean Machine)
 1. Open the DMG and drag the app into Applications.
-2. Verify the model is inside the app bundle:
-
-```bash
-ls -lah "/Applications/AI Meeting Assistant.app/Contents/Resources/models/llm"
-```
-
-3. Launch the app normally (no terminal).
+2. Launch the app normally (no terminal).
+3. If prompted for missing model files, install the separate model pack (or rebuild with bundled GGUF).
 4. Verify:
 - Recording produces transcript in ~10s
 - Full summary works
@@ -82,7 +75,6 @@ Windows installer should be built on Windows or CI:
 
 ```powershell
 cd C:\path\to\ai-gent
-python scripts\prepare_desktop_assets.py
 python scripts\build_backend.py
 cd desktop
 npm run build:win
@@ -92,11 +84,11 @@ Expected:
 - `desktop\dist\AI Meeting Assistant Setup 0.1.0.exe`
 
 ## Troubleshooting
-- Missing model inside app bundle: re-run `scripts/prepare_desktop_assets.py` then rebuild DMG.
+- Missing model prompt on launch: install the model pack, or rebuild with `cd desktop && npm run build:mac:bundle-gguf`.
 - Backend startup error: ensure `scripts/build_backend.py` includes hidden imports for
   `engineio.async_drivers.threading` and `socketio.async_drivers.threading`.
 
 ## Risks / Limitations
-- Large installer sizes due to bundled GGUF and STT models (multi-GB).
+- Bundled-model variants are still multi-GB if GGUF/Ollama assets are included.
 - Unsigned DMG may trigger macOS Gatekeeper warnings on other machines.
 - Windows build should be produced on Windows or CI to avoid cross-platform packaging issues.
