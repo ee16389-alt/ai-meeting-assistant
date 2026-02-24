@@ -41,7 +41,6 @@ def main():
         "--name", "ai_meeting_backend",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "socketio.async_drivers.threading",
-        "app.py",
     ]
     add_data_arg(cmd, "templates", "templates", required=True)
     add_data_arg(cmd, "static", "static")
@@ -49,6 +48,7 @@ def main():
         add_data_arg(cmd, "models/sherpa-onnx", "models/sherpa-onnx")
     else:
         print("Skipping embedded sherpa-onnx model bundle (EMBED_SHERPA_ONNX disabled)")
+    cmd.append("app.py")
     run(cmd)
 
     built = DIST / f"ai_meeting_backend{EXE_SUFFIX}"
