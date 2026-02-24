@@ -10,6 +10,7 @@ const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 const SUMMARY_ENGINE = (process.env.SUMMARY_ENGINE || "llama_cpp").trim().toLowerCase();
 const DEFAULT_GGUF = modelPackConfig.ggufFilename;
+const SHERPA_MODEL_DIR_NAME = modelPackConfig.sherpaModelDirName;
 const MODEL_VERSION_LABEL = modelPackConfig.versionLabel;
 const MODEL_INSTALLER_FILENAME = modelPackConfig.installerFilename;
 const MODEL_PACK_DOWNLOAD_URL = "https://github.com/ee16389-alt/ai-meeting-assistant/releases";
@@ -23,6 +24,35 @@ function getManagedModelDir() {
     return path.join(localAppData, "AI Meeting Assistant", "models", "llm");
   }
   return path.join(app.getPath("userData"), "models", "llm");
+}
+
+function getManagedSherpaRootDir() {
+  return path.join(getManagedModelDir(), "..", "sherpa-onnx");
+}
+
+function hasSherpaModelFiles(modelDir) {
+  if (!modelDir || !fs.existsSync(modelDir) || !fs.statSync(modelDir).isDirectory()) {
+    return false;
+  }
+  const names = new Set(fs.readdirSync(modelDir));
+  const hasEncoder = names.has("encoder-epoch-99-avg-1.int8.onnx") || names.has("encoder-epoch-99-avg-1.onnx");
+  const hasJoiner = names.has("joiner-epoch-99-avg-1.int8.onnx") || names.has("joiner-epoch-99-avg-1.onnx");
+  return hasEncoder && hasJoiner && names.has("decoder-epoch-99-avg-1.onnx") && names.has("tokens.txt");
+}
+
+function findSherpaDirInSelectedDirectory(selectedDir) {
+  const candidates = [
+    selectedDir,
+    path.join(selectedDir, SHERPA_MODEL_DIR_NAME),
+    path.join(selectedDir, "sherpa-onnx", SHERPA_MODEL_DIR_NAME),
+    path.join(selectedDir, "models", "sherpa-onnx", SHERPA_MODEL_DIR_NAME),
+  ];
+  for (const candidate of candidates) {
+    if (hasSherpaModelFiles(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
 }
 
 function findModelInSelectedDirectory(selectedDir) {
@@ -83,6 +113,52 @@ function promptForModelPath(candidates) {
   }
 }
 
+function promptForSherpaModelDir(candidates) {
+  while (true) {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      buttons: ["選擇模型資料夾", "開啟模型包下載頁", "結束"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "缺少語音辨識模型",
+      message: "找不到 Sherpa-ONNX 模型",
+      detail:
+        `支援模型版本：${MODEL_VERSION_LABEL}\n` +
+        `預期資料夾：${SHERPA_MODEL_DIR_NAME}\n` +
+        `建議安裝模型包：${MODEL_INSTALLER_FILENAME}\n\n` +
+        "已檢查路徑：\n" +
+        candidates.map((p) => `- ${p}`).join("\n"),
+    });
+
+    if (choice === 0) {
+      const picked = dialog.showOpenDialogSync({
+        title: "選擇 Sherpa-ONNX 模型資料夾",
+        properties: ["openDirectory"],
+      });
+      if (!picked || picked.length === 0) {
+        continue;
+      }
+      const found = findSherpaDirInSelectedDirectory(picked[0]);
+      if (found) {
+        return found;
+      }
+      dialog.showErrorBox(
+        "Sherpa-ONNX 模型不完整",
+        `在所選資料夾中找不到完整的 Sherpa-ONNX 模型檔。\n請安裝對應模型包（${MODEL_VERSION_LABEL}）。`
+      );
+      continue;
+    }
+
+    if (choice === 1) {
+      shell.openExternal(MODEL_PACK_DOWNLOAD_URL);
+      continue;
+    }
+
+    return null;
+  }
+}
+
 function resolveProductionModelPath() {
   const envModelPath = (process.env.LLM_MODEL_PATH || "").trim();
   const packagedModelPath = path.join(process.resourcesPath, "models", "llm", DEFAULT_GGUF);
@@ -96,6 +172,21 @@ function resolveProductionModelPath() {
   }
 
   return promptForModelPath(candidates);
+}
+
+function resolveProductionSherpaModelDir() {
+  const envSherpaDir = (process.env.SHERPA_ONNX_MODEL_DIR || "").trim();
+  const packagedSherpaDir = path.join(process.resourcesPath, "models", "sherpa-onnx", SHERPA_MODEL_DIR_NAME);
+  const managedSherpaDir = path.join(getManagedSherpaRootDir(), SHERPA_MODEL_DIR_NAME);
+  const candidates = [envSherpaDir, packagedSherpaDir, managedSherpaDir].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (hasSherpaModelFiles(candidate)) {
+      return candidate;
+    }
+  }
+
+  return promptForSherpaModelDir(candidates);
 }
 
 function waitForServer(url, timeoutMs = 30000) {
@@ -144,12 +235,23 @@ function startBackend() {
       app.quit();
       return;
     }
+    const sherpaModelDir = resolveProductionSherpaModelDir();
+    if (!sherpaModelDir || !hasSherpaModelFiles(sherpaModelDir)) {
+      if (!sherpaModelDir) {
+        app.quit();
+        return;
+      }
+      dialog.showErrorBox("安裝包缺少語音辨識模型", `找不到完整 Sherpa-ONNX 模型：${sherpaModelDir}`);
+      app.quit();
+      return;
+    }
     backendProcess = spawn(backendPath, [], {
       stdio: "inherit",
       env: {
         ...process.env,
         COGNITION_BACKEND: SUMMARY_ENGINE === "ollama" ? "ollama" : "llama_cpp",
         LLM_MODEL_PATH: modelPath,
+        SHERPA_ONNX_MODEL_DIR: sherpaModelDir,
       },
     });
   } else {

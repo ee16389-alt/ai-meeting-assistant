@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "desktop" / "model_pack_config.json"
 NSI_SCRIPT = ROOT / "packaging" / "windows" / "model_pack_installer.nsi"
 SRC_DIR = ROOT / "models" / "llm"
+SHERPA_SRC_DIR = ROOT / "models" / "sherpa-onnx"
 OUT_DIR = ROOT / "desktop" / "dist-model"
 
 
@@ -54,6 +55,8 @@ def main() -> int:
     model_file = SRC_DIR / model_filename
     if not model_file.exists():
         raise SystemExit(f"missing GGUF model for installer: {model_file}")
+    if not SHERPA_SRC_DIR.exists():
+        raise SystemExit(f"missing sherpa-onnx model dir for installer: {SHERPA_SRC_DIR}")
     if not NSI_SCRIPT.exists():
         raise SystemExit(f"missing NSIS script: {NSI_SCRIPT}")
 
@@ -69,6 +72,7 @@ def main() -> int:
         f"/DMODEL_FILE={model_file}",
         f"/DMODEL_FILENAME={model_filename}",
         f"/DMODEL_VERSION_LABEL={model_version}",
+        f"/DSHERPA_DIR={SHERPA_SRC_DIR}",
         f"/DOUTPUT_EXE={out_file}",
         str(NSI_SCRIPT),
     ]

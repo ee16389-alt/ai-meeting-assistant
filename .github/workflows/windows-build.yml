@@ -64,6 +64,8 @@ jobs:
           python scripts\build_windows_model_installer.py
 
       - name: Build backend
+        env:
+          EMBED_SHERPA_ONNX: "0"
         run: |
           python scripts\build_backend.py
 

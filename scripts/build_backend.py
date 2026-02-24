@@ -11,6 +11,7 @@ OUT_DIR = ROOT / "desktop" / "backend"
 EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 OUT_BIN = OUT_DIR / f"ai_meeting_backend{EXE_SUFFIX}"
 DATA_SEP = os.pathsep
+EMBED_SHERPA_ONNX = os.getenv("EMBED_SHERPA_ONNX", "1").strip().lower() not in {"0", "false", "no"}
 
 
 def run(cmd):
@@ -44,7 +45,10 @@ def main():
     ]
     add_data_arg(cmd, "templates", "templates", required=True)
     add_data_arg(cmd, "static", "static")
-    add_data_arg(cmd, "models/sherpa-onnx", "models/sherpa-onnx")
+    if EMBED_SHERPA_ONNX:
+        add_data_arg(cmd, "models/sherpa-onnx", "models/sherpa-onnx")
+    else:
+        print("Skipping embedded sherpa-onnx model bundle (EMBED_SHERPA_ONNX disabled)")
     run(cmd)
 
     built = DIST / f"ai_meeting_backend{EXE_SUFFIX}"

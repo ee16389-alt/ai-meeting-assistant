@@ -1,5 +1,6 @@
 {
   "versionLabel": "qwen2.5-1.5b-q5_k_m",
   "ggufFilename": "qwen2.5-1.5b-instruct-q5_k_m.gguf",
+  "sherpaModelDirName": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
   "installerFilename": "AI-Meeting-Assistant-Model-Pack-qwen2.5-1.5b-q5_k_m-Setup.exe"
 }
