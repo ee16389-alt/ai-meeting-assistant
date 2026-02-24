@@ -63,7 +63,10 @@ jobs:
               print(f"Sherpa layout OK: {expected}")
               raise SystemExit(0)
 
-          matches = [p for p in root.rglob(cfg["sherpaModelDirName"]) if p.is_dir()]
+          matches = [
+              p for p in root.rglob(cfg["sherpaModelDirName"])
+              if p.is_dir() and "__MACOSX" not in p.parts
+          ]
           if len(matches) == 1:
               src = matches[0]
               expected.parent.mkdir(parents=True, exist_ok=True)
@@ -202,7 +205,8 @@ jobs:
           $expectedName = $cfg.sherpaModelDirName
           $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
           if (-not (Test-Path $expectedDir)) {
-            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse | Where-Object { $_.Name -eq $expectedName }
+            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
+              Where-Object { $_.Name -eq $expectedName -and $_.FullName -notmatch '[\\/]+__MACOSX([\\/]|$)' }
             if ($matches.Count -eq 1) {
               $src = $matches[0].FullName
               Move-Item -Path $src -Destination $expectedDir -Force
