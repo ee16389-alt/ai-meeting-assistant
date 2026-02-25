@@ -9,7 +9,8 @@ const OLLAMA_PKG_URL = "https://ollama.com/download/Ollama.pkg";
 const MODEL = "qwen2.5:1.5b";
 
 function hasOllama() {
-  const result = spawnSync("which", ["ollama"]);
+  const lookupCmd = process.platform === "win32" ? "where" : "which";
+  const result = spawnSync(lookupCmd, ["ollama"]);
   return result.status === 0;
 }
 
@@ -38,7 +39,20 @@ async function installOllamaMac() {
 }
 
 async function ensureOllama() {
-  if (hasOllama()) return;
+  if (hasOllama()) return true;
+
+  if (process.platform !== "darwin") {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      buttons: ["前往下載", "取消"],
+      defaultId: 0,
+      message: "未偵測到 Ollama，請先安裝後再啟動。",
+    });
+    if (choice === 0) {
+      shell.openExternal("https://ollama.com/download");
+    }
+    return false;
+  }
 
   const choice = dialog.showMessageBoxSync({
     type: "warning",
@@ -49,7 +63,7 @@ async function ensureOllama() {
 
   if (choice !== 0) {
     shell.openExternal("https://ollama.com/download");
-    return;
+    return false;
   }
 
   try {
@@ -57,10 +71,13 @@ async function ensureOllama() {
     if (!ok) {
       dialog.showErrorBox("安裝失敗", "Ollama 安裝失敗，請手動安裝。");
       shell.openExternal("https://ollama.com/download");
+      return false;
     }
+    return true;
   } catch (e) {
     dialog.showErrorBox("安裝失敗", "Ollama 安裝失敗，請手動安裝。");
     shell.openExternal("https://ollama.com/download");
+    return false;
   }
 }
 
@@ -79,6 +96,7 @@ function ensureModel(onProgress) {
       const text = data.toString();
       if (onProgress) onProgress(text);
     });
+    pull.on("error", () => resolve(false));
     pull.on("close", (code) => resolve(code === 0));
   });
 }
