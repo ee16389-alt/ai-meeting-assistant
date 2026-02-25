@@ -30,8 +30,12 @@ def main():
         "app.py",
     ])
 
-    built = DIST / "ai_meeting_backend"
-    if not built.exists():
+    candidates = [
+        DIST / "ai_meeting_backend",
+        DIST / "ai_meeting_backend.exe",
+    ]
+    built = next((p for p in candidates if p.exists()), None)
+    if built is None:
         raise SystemExit("build failed: backend binary not found")
     shutil.copy2(built, OUT_BIN)
     print(f"backend binary -> {OUT_BIN}")
