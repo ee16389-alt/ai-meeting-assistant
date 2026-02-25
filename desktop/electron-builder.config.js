@@ -6,6 +6,7 @@ function isTrue(value) {
 const bundleGguf = isTrue(process.env.BUNDLE_GGUF);
 const bundleSherpaModels = isTrue(process.env.BUNDLE_SHERPA_MODELS);
 const bundleOllamaModels = isTrue(process.env.BUNDLE_OLLAMA_MODELS);
+const artifactSuffix = String(process.env.BUILD_ARTIFACT_SUFFIX || "");
 
 const extraResources = [
   {
@@ -42,6 +43,7 @@ if (bundleOllamaModels) {
 module.exports = {
   appId: "com.minashih.ai-meeting-assistant",
   productName: "AI Meeting Assistant",
+  artifactName: `\${productName}-\${version}-\${arch}${artifactSuffix}.\${ext}`,
   files: [
     "**/*",
     "!backend/**",

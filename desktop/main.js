@@ -70,6 +70,10 @@ function startBackend() {
 
 async function createWindow() {
   const bundledMode = hasBundledModels();
+  if (bundledMode) {
+    // For bundled builds, prefer a true offline path: backend must use local GGUF only.
+    process.env.AMA_DISABLE_OLLAMA_FALLBACK = "1";
+  }
 
   if (!bundledMode) {
     const ollamaReady = await ensureOllama();
