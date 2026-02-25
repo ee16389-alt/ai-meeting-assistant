@@ -97,7 +97,9 @@ jobs:
         working-directory: desktop
         shell: pwsh
         run: |
-          npm run build:win:bundle-full
+          $env:BUNDLE_GGUF = "1"
+          $env:BUNDLE_SHERPA_MODELS = "1"
+          npm run build:win
 
       - name: Upload Windows bundled installer
         uses: actions/upload-artifact@v4
