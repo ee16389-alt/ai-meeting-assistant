@@ -5,3 +5,4 @@ requests
 numpy
 pydub
 audioop-lts
+llama-cpp-python
