@@ -4,9 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI 會議助理 v1.1.0</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/static/vendor/tailwind.js"></script>
+    <script src="/static/vendor/lucide.min.js"></script>
+    <script src="/static/vendor/socket.io.min.js"></script>
     <style>
         :root {
             --ink: #1f2937;
@@ -16,26 +16,52 @@
             --uni-green: #2aa84a;
             --uni-green-dark: #1f8a3b;
             --sun: #f8b400;
-            --panel: rgba(255, 255, 255, 0.95);
-            --panel-strong: rgba(255, 255, 255, 0.98);
-            --border: rgba(17, 24, 39, 0.08);
-            --soft: #fff7ef;
-            --soft-green: #f1fbf4;
+            --panel: rgba(255, 255, 255, 0.74);
+            --panel-strong: rgba(255, 255, 255, 0.9);
+            --border: rgba(148, 163, 184, 0.26);
+            --soft: rgba(255, 247, 239, 0.84);
+            --soft-green: rgba(241, 251, 244, 0.86);
+            --shadow-soft: 0 20px 45px rgba(15, 23, 42, 0.09);
+        }
+        @keyframes float-in {
+            from { opacity: 0; transform: translateY(10px) scale(0.995); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
         }
         @keyframes pulse-red {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
         }
         .animate-pulse-red { animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        .float-in { animation: float-in 0.45s ease both; }
         .proofread-updated { border-left: 3px solid #22c55e; padding-left: 8px; transition: all 0.3s; }
-        .tab-active { background-color: var(--uni-orange); color: white; box-shadow: 0 8px 20px rgba(243, 107, 33, 0.25); }
-        .tab-inactive { background-color: white; color: #475569; border: 1px solid rgba(148,163,184,0.2); }
+        .tab-active { background: linear-gradient(135deg, #f36b21, #ff7f38); color: white; box-shadow: 0 10px 18px rgba(243, 107, 33, 0.28); }
+        .tab-inactive { background-color: rgba(255, 255, 255, 0.82); color: #475569; border: 1px solid rgba(148,163,184,0.22); }
+        .partial-line { opacity: 0.7; border-left: 3px dashed #f59e0b; }
+        .warmup-hint {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(243, 107, 33, 0.08);
+            color: #9a3412;
+            border: 1px solid rgba(243, 107, 33, 0.25);
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .warmup-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 999px;
+            background: #f97316;
+            animation: pulse-red 1.2s ease-in-out infinite;
+        }
         .glass {
-            background: var(--panel);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
+            background: linear-gradient(180deg, var(--panel-strong), var(--panel));
+            backdrop-filter: blur(16px) saturate(125%);
+            -webkit-backdrop-filter: blur(16px) saturate(125%);
             border: 1px solid var(--border);
-            box-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
+            box-shadow: var(--shadow-soft);
         }
         .panel-header {
             height: 120px;
@@ -48,57 +74,164 @@
         }
         .grid-glow {
             background-image:
-                radial-gradient(900px 500px at 8% -10%, rgba(243, 107, 33, 0.18), transparent),
-                radial-gradient(900px 500px at 95% -10%, rgba(42, 168, 74, 0.16), transparent),
-                radial-gradient(380px 220px at 10% 25%, rgba(248, 180, 0, 0.18), transparent),
-                radial-gradient(420px 260px at 85% 20%, rgba(255, 122, 168, 0.18), transparent),
-                linear-gradient(180deg, #fff8f3 0%, #f8fafc 55%, #f3f7f2 100%);
+                radial-gradient(820px 420px at 8% -8%, rgba(243, 107, 33, 0.24), transparent),
+                radial-gradient(820px 430px at 96% 2%, rgba(42, 168, 74, 0.2), transparent),
+                radial-gradient(500px 280px at 15% 78%, rgba(255, 191, 145, 0.2), transparent),
+                radial-gradient(500px 280px at 88% 80%, rgba(149, 236, 184, 0.18), transparent),
+                linear-gradient(180deg, #fff9f4 0%, #f8fafc 52%, #f3f8f4 100%);
+            background-attachment: fixed;
         }
-        
         .scanline { position: relative; }
         .card-pop {
-            border-radius: 28px;
+            border-radius: 24px;
             box-shadow:
-                0 20px 40px rgba(243, 107, 33, 0.08),
-                0 8px 16px rgba(16, 24, 40, 0.04);
+                0 24px 38px rgba(15, 23, 42, 0.08),
+                0 6px 12px rgba(16, 24, 40, 0.03);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .card-pop:hover {
+            transform: translateY(-1px);
+            box-shadow:
+                0 28px 44px rgba(15, 23, 42, 0.1),
+                0 10px 18px rgba(16, 24, 40, 0.05);
         }
         .pill { border-radius: 999px; }
+        .hero-shell {
+            position: relative;
+            overflow: hidden;
+        }
+        .hero-shell::before {
+            content: "";
+            position: absolute;
+            inset: -1px;
+            background: linear-gradient(125deg, rgba(243, 107, 33, 0.2), rgba(99, 102, 241, 0.06), rgba(42, 168, 74, 0.16));
+            z-index: -1;
+        }
+        .panel-accent-transcript {
+            background: linear-gradient(100deg, rgba(255, 241, 229, 0.92), rgba(255, 248, 242, 0.8));
+        }
+        .panel-accent-summary {
+            background: linear-gradient(100deg, rgba(235, 252, 242, 0.9), rgba(245, 255, 250, 0.8));
+        }
+        .control-chip {
+            background: rgba(255, 255, 255, 0.72);
+            border: 1px solid rgba(148, 163, 184, 0.24);
+            border-radius: 12px;
+            padding: 9px 12px;
+            transition: all 0.2s ease;
+        }
+        .control-chip:hover {
+            border-color: rgba(243, 107, 33, 0.35);
+            background: rgba(255, 255, 255, 0.86);
+        }
+        .primary-cta {
+            background: linear-gradient(135deg, #f36b21, #ff8a3d);
+            box-shadow: 0 16px 24px rgba(243, 107, 33, 0.28);
+        }
+        .primary-cta:hover {
+            filter: brightness(1.03);
+            transform: translateY(-1px);
+        }
+        .secondary-cta {
+            box-shadow: 0 10px 16px rgba(220, 38, 38, 0.22);
+        }
+        .toast {
+            position: fixed;
+            top: 18px;
+            right: 18px;
+            z-index: 50;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(243, 107, 33, 0.25);
+            color: #1f2937;
+            padding: 10px 14px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+            display: none;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .toast.show { display: block; }
+        .ui-checkbox {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 6px;
+            background: #ffffff;
+            display: inline-grid;
+            place-content: center;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .ui-checkbox:hover {
+            border-color: #f36b21;
+        }
+        .ui-checkbox:checked {
+            background-color: #f36b21;
+            border-color: #f36b21;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='2.2' d='M3.2 8.5 6.7 12 12.8 4.8'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 13px 13px;
+        }
+        .ui-checkbox:focus-visible {
+            outline: 2px solid #fdba74;
+            outline-offset: 2px;
+        }
+        @media (max-width: 1024px) {
+            .panel-header { height: auto; min-height: 108px; }
+            .panel-body { height: calc(520px - 108px); }
+        }
+        @media (max-width: 768px) {
+            .panel-body { height: 360px; }
+        }
     </style>
 </head>
 <body class="grid-glow font-sans text-slate-900 p-4 md:p-8">
+    <div id="toast" class="toast"></div>
     <div class="max-w-7xl mx-auto">
 
         <!-- HEADER -->
-        <header class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 glass p-6 rounded-2xl card-pop">
-            <div class="w-full flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div>
-                <div class="flex items-center gap-3">
-                    <div class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
-                    <h1 class="text-2xl font-bold tracking-tight text-slate-900">AI 會議助理</h1>
-                    <span class="text-xs font-mono bg-slate-900/10 text-slate-700 px-2 py-1 rounded pill">v1.1.0</span>
+        <header class="mb-8 glass p-6 rounded-2xl card-pop hero-shell float-in">
+            <div class="flex flex-col gap-5">
+                <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                        <div class="flex items-center gap-3">
+                            <div class="w-2.5 h-2.5 rounded-full bg-emerald-400"></div>
+                            <h1 class="text-2xl font-bold tracking-tight text-slate-900" data-i18n="app_title">AI 會議助理</h1>
+                            <span class="text-xs font-mono bg-slate-900/10 text-slate-700 px-2 py-1 rounded pill">v1.1.0</span>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button id="main-btn" onclick="mainAction()" class="flex items-center gap-2 text-white px-8 py-3 text-lg pill transition-all primary-cta">
+                            <i data-lucide="mic" class="w-4 h-4"></i> <span id="main-btn-text" data-i18n="start_meeting">開始會議</span>
+                        </button>
+                        <button id="stop-btn" onclick="stopRecording()" class="hidden flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-8 py-3 text-lg pill transition-all border border-red-600/20 secondary-cta">
+                            <i data-lucide="square" class="w-5 h-5"></i> <span data-i18n="stop">停止</span>
+                        </button>
+                    </div>
                 </div>
-                <p class="text-slate-600 text-sm mt-1">解耦式 AI 服務架構 (Whisper + Ollama API)</p>
-            </div>
 
-            <div class="flex items-center gap-3">
-                <div id="status-badge" class="flex items-center gap-2 px-3 py-2 bg-white rounded-lg border border-slate-200 pill">
-                    <i data-lucide="activity" id="status-icon" class="w-4 h-4 text-slate-500"></i>
-                    <span id="status-text" class="text-sm font-medium text-slate-700">準備就緒</span>
+                <div class="flex flex-col lg:flex-row lg:items-center gap-3">
+                    <div class="flex-1 min-w-[220px]">
+                        <label class="text-base font-semibold text-slate-600 uppercase tracking-wider mb-1 block" data-i18n="meeting_label">會議名稱</label>
+                        <input id="meeting-name" type="text" placeholder="輸入會議名稱..." data-i18n-placeholder="meeting_placeholder" class="bg-white border border-slate-200 rounded-lg px-4 py-3 text-base w-full text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-300">
+                    </div>
+                    <div class="flex items-end gap-3 flex-wrap">
+                        <div class="min-w-[180px]">
+                            <label class="text-base font-semibold text-slate-600 uppercase tracking-wider mb-1 block w-full" data-i18n="ui_lang">介面語言</label>
+                            <select id="lang-select" class="bg-white border border-slate-200 text-slate-700 text-base px-3 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-300 w-full">
+                                <option value="zh">中文</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
+                        <label class="flex items-center gap-2 text-base text-slate-700 control-chip">
+                            <input id="save-audio" type="checkbox" class="ui-checkbox">
+                            <span data-i18n="save_audio">儲存錄音檔</span>
+                        </label>
+                    </div>
                 </div>
-
-                <input id="meeting-name" type="text" placeholder="輸入會議名稱..." class="bg-white border border-slate-200 rounded-lg px-4 py-2 text-sm w-52 text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-300 pill">
-                <label class="flex items-center gap-2 text-sm text-slate-700 bg-white border border-slate-200 px-3 py-2 pill">
-                    <input id="save-audio" type="checkbox" class="accent-orange-500">
-                    儲存錄音檔
-                </label>
-
-                <button id="main-btn" onclick="mainAction()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-6 py-2 pill transition-all shadow-lg shadow-orange-500/30">
-                    <i data-lucide="mic" class="w-4 h-4"></i> <span>開始會議</span>
-                </button>
-                <button id="stop-btn" onclick="stopRecording()" class="hidden flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 pill transition-all border border-emerald-600/20">
-                    <i data-lucide="square" class="w-4 h-4"></i> <span>停止</span>
-                </button>
-            </div>
             </div>
         </header>
 
@@ -106,49 +239,66 @@
         <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
             <!-- LEFT: 即時逐字稿 -->
-            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop">
+            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop float-in">
                 <div class="flex flex-col h-full">
-                <div class="p-5 border-b border-slate-200 flex flex-col justify-between bg-[var(--soft)] panel-header">
-                    <div class="flex justify-between items-center">
+                <div class="p-5 border-b border-slate-200 flex flex-col justify-between panel-header panel-accent-transcript">
+                    <div class="flex justify-between items-center gap-3">
                         <div class="flex items-center gap-2">
                             <i data-lucide="file-text" class="w-5 h-5 text-orange-500"></i>
-                            <h2 class="font-bold text-slate-900">即時逐字稿 (感知層)</h2>
+                            <h2 class="font-bold text-slate-900 text-[28px] leading-tight" data-i18n="transcript_title">即時逐字稿</h2>
                         </div>
-                        <span class="text-[10px] bg-orange-50 text-orange-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-orange-100">Whisper Small</span>
+                        <div class="flex items-center gap-2 flex-nowrap justify-end">
+                            <button id="edit-transcript-btn" onclick="startEditTranscript()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                                <i data-lucide="pencil-line" class="w-4 h-4 text-orange-500"></i> <span data-i18n="edit_transcript">編輯</span>
+                            </button>
+                            <button id="edit-done-btn" onclick="finishEditTranscript()" class="hidden flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all">
+                                <i data-lucide="check" class="w-4 h-4"></i> <span data-i18n="edit_done">完成</span>
+                            </button>
+                            <button id="enhance-btn" onclick="enhanceTranscript()" class="flex items-center gap-2 bg-white hover:bg-emerald-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-emerald-200">
+                                <i data-lucide="sparkles" class="w-4 h-4 text-emerald-600"></i> <span data-i18n="enhance_transcript">文字校對</span>
+                            </button>
+                            <button id="enhance-undo-btn" onclick="undoEnhance()" class="hidden flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-slate-200">
+                                <i data-lucide="rotate-ccw" class="w-4 h-4 text-slate-600"></i> <span data-i18n="undo_enhance">復原</span>
+                            </button>
+                        </div>
                     </div>
                     <div class="summary-toolbar"></div>
                 </div>
                 <div id="transcript-container" class="flex-1 overflow-y-auto p-6 space-y-3 panel-body">
                     <div id="empty-state" class="h-full flex flex-col items-center justify-center text-slate-400">
                         <i data-lucide="mic" class="w-12 h-12 mb-2 opacity-40"></i>
-                        <p>點擊「開始會議」啟動收音</p>
+                        <p data-i18n="empty_transcript">點擊「開始會議」啟動收音</p>
+                    </div>
+                    <div id="warmup-hint" class="hidden">
+                        <span class="warmup-dot"></span>
+                        <span data-i18n="warmup_hint">模型預熱中，第一行稍等…</span>
                     </div>
                 </div>
                 </div>
             </section>
 
             <!-- RIGHT: AI 摘要 -->
-            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop">
+            <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop float-in">
                 <div class="flex flex-col h-full">
-                <div class="p-5 border-b border-slate-200 bg-[var(--soft-green)] panel-header">
+                <div class="p-5 border-b border-slate-200 panel-header panel-accent-summary">
                     <div class="flex justify-between items-center">
                         <div class="flex items-center gap-2">
                             <i data-lucide="cpu" class="w-5 h-5 text-emerald-600"></i>
-                            <h2 class="font-bold text-slate-900">AI 智慧摘要 (認知層)</h2>
+                            <h2 class="font-bold text-slate-900 text-[28px] leading-tight" data-i18n="summary_title">AI 智慧摘要</h2>
                         </div>
-                        <span class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100">Qwen 2.5</span>
+                        <span class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100 hidden">Qwen 2.5</span>
                     </div>
                     <div class="flex gap-2 flex-wrap summary-toolbar">
-                        <button onclick="requestSummary('full')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="full">全文摘要</button>
-                        <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points">重點條列</button>
-                        <button onclick="requestSummary('action_items')" class="summary-tab tab-inactive text-xs px-3 py-1.5 rounded-lg font-medium transition-all" data-mode="action_items">待辦清單</button>
-                        <button onclick="requestAllSummaries()" class="text-xs px-3 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500">全部摘要</button>
+                        <button onclick="requestSummary('full')" class="summary-tab tab-active text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="full" data-i18n="summary_full">全文摘要</button>
+                        <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points" data-i18n="summary_key">重點條列</button>
+                        <button onclick="requestSummary('action_items')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="action_items" data-i18n="summary_action">待辦清單</button>
+                        <button onclick="requestAllSummaries()" class="text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500" data-i18n="summary_all">全部摘要</button>
                     </div>
                 </div>
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-400 text-center p-10">
                         <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-30"></i>
-                        <p>錄音結束後，點選上方分頁產生 AI 摘要</p>
+                        <p data-i18n="summary_empty">錄音結束後，點選上方分頁產生 AI 摘要</p>
                     </div>
                 </div>
                 </div>
@@ -156,27 +306,104 @@
         </main>
 
         <!-- FOOTER -->
-        <footer class="mt-8 flex flex-col md:flex-row items-center justify-between gap-4 glass p-4 rounded-2xl card-pop">
-            <div class="w-full flex flex-col md:flex-row items-center justify-between gap-4">
-            <div class="flex items-center gap-3 flex-1">
-                <button onclick="exportMeeting()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-4 py-2 rounded-lg text-sm transition-all border border-slate-200 pill">
-                    <i data-lucide="download" class="w-4 h-4"></i> 匯出逐字稿
+        <footer class="mt-8 glass p-4 rounded-2xl card-pop float-in space-y-3">
+            <div class="w-full flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                <button id="guide-btn" onclick="toggleGuide()" class="flex items-center gap-2 whitespace-nowrap bg-white hover:bg-orange-50 text-orange-600 px-4 py-2 rounded-lg text-sm transition-all border border-orange-200">
+                    <i data-lucide="book-open" class="w-4 h-4"></i> <span data-i18n="usage_guide">使用說明</span>
                 </button>
-                <select id="summary-export-mode" class="bg-white border border-slate-200 text-slate-700 text-sm px-3 py-2 rounded-lg pill focus:outline-none focus:ring-2 focus:ring-orange-300">
-                    <option value="full">匯出全文摘要</option>
-                    <option value="key_points">匯出重點條列</option>
-                    <option value="action_items">匯出待辦清單</option>
-                    <option value="all">匯出全部摘要</option>
-                </select>
+                <button id="contact-btn" onclick="toggleContact()" class="flex items-center gap-2 whitespace-nowrap bg-white hover:bg-orange-50 text-orange-600 px-4 py-2 rounded-lg text-sm transition-all border border-orange-200">
+                    <i data-lucide="mail" class="w-4 h-4"></i> <span data-i18n="contact_us">聯絡我們</span>
+                </button>
+                </div>
+            <div class="flex flex-wrap items-center justify-end gap-3">
+                <button onclick="exportMeeting()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-lg shadow-orange-500/30">
+                    <i data-lucide="download" class="w-4 h-4"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
+                </button>
+                <div class="relative">
+                    <i data-lucide="file-down" class="w-4 h-4 text-white absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                    <i data-lucide="chevron-down" class="w-4 h-4 text-white absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-90"></i>
+                    <select id="summary-export-mode" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm pl-10 pr-10 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-300 transition-all border border-emerald-600/40 appearance-none">
+                        <option class="text-slate-900" value="full" data-i18n="export_full">匯出全文摘要</option>
+                        <option class="text-slate-900" value="key_points" data-i18n="export_key">匯出重點條列</option>
+                        <option class="text-slate-900" value="action_items" data-i18n="export_action">匯出待辦清單</option>
+                        <option class="text-slate-900" value="all" data-i18n="export_all">匯出全部摘要</option>
+                    </select>
+                </div>
+                <button id="open-storage-btn" onclick="openStorageFolder()" class="h-[42px] flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg text-sm transition-all border border-emerald-200 whitespace-nowrap">
+                    <i data-lucide="folder-open" class="w-4 h-4"></i> <span data-i18n="open_storage_folder">開啟存放資料夾</span>
+                </button>
             </div>
-            <div class="flex items-center gap-2 text-xs text-slate-500">
-                <span id="connection-status" class="flex items-center gap-1">
-                    <span id="conn-dot" class="w-2 h-2 rounded-full bg-slate-300"></span>
-                    <span id="conn-text">連線中...</span>
-                </span>
             </div>
+            <div class="w-full">
+                <div class="text-xs text-slate-600 bg-white/70 border border-slate-200 rounded-lg px-3 py-2 flex-1 min-w-0">
+                    <span class="font-semibold" data-i18n="storage_path_label">目前存放位置：</span>
+                    <span id="storage-path-text" class="font-mono break-all text-slate-700"></span>
+                </div>
             </div>
         </footer>
+    </div>
+
+    <div id="contact-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
+        <div class="absolute inset-0 bg-slate-900/30" onclick="toggleContact()"></div>
+        <div class="relative bg-white rounded-2xl border border-orange-100 shadow-xl p-6 w-[320px]">
+            <div class="flex items-center justify-between mb-3">
+                <div class="text-base font-semibold text-slate-900" data-i18n="contact_us">聯絡我們</div>
+                <button onclick="toggleContact()" class="text-slate-400 hover:text-slate-700">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+            <div class="text-sm text-slate-700 space-y-1">
+                <div class="font-semibold text-slate-900">施孟芊</div>
+                <div>永康分機 6681</div>
+                <div>ee16389@gmail.com</div>
+                <div class="pt-2 mt-2 border-t border-slate-200"></div>
+                <div class="font-semibold text-slate-900">吳孟霖</div>
+                <div>永康分機 6665</div>
+                <div>meng@mail.pec.com.tw</div>
+            </div>
+        </div>
+    </div>
+
+    <div id="guide-modal" class="hidden fixed inset-0 z-50 items-center justify-center px-4">
+        <div class="absolute inset-0 bg-slate-900/30" onclick="toggleGuide()"></div>
+        <div class="relative bg-white rounded-2xl border border-emerald-100 shadow-xl p-6 w-full max-w-3xl max-h-[80vh] overflow-y-auto">
+            <div class="flex items-center justify-between mb-4">
+                <div class="text-lg font-semibold text-slate-900" data-i18n="usage_guide">使用說明</div>
+                <button onclick="toggleGuide()" class="text-slate-400 hover:text-slate-700">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="text-sm text-slate-700 space-y-4 leading-relaxed">
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">1. 開始會議</div>
+                    <div>輸入會議名稱後，點擊「開始會議」。系統會啟動麥克風並即時顯示逐字稿。</div>
+                </div>
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">2. 錄音控制</div>
+                    <div>你可以在錄音中「暫停 / 繼續 / 停止」。停止後會做最後一段語音整理。</div>
+                </div>
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">3. 逐字稿編輯與校對</div>
+                    <div>錄音停止後可按「編輯」修改逐字稿。若啟用校對，系統會自動做文字修正。</div>
+                </div>
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">4. 產生 AI 摘要</div>
+                    <div>在右側可選擇「全文摘要 / 重點條列 / 待辦清單 / 全部摘要」。</div>
+                </div>
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">5. 匯出檔案</div>
+                    <div>可匯出逐字稿與摘要，檔案會下載到你的電腦，並同步寫入專案的 <code>download/</code> 目錄。</div>
+                </div>
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1">6. 離線使用說明</div>
+                    <div>只要模型已先下載完成（STT 與摘要模型），在無網路狀態下也可錄音、轉寫、摘要與匯出。</div>
+                </div>
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900">
+                    建議：正式會議前先做 1 次 30 秒測試錄音，確認麥克風、模型與匯出流程正常。
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -188,29 +415,276 @@
         let mediaRecorder = null;
         let audioStream = null;
         let audioContext = null;
+        let audioSourceNode = null;
         let processor = null;
+        let micReady = false;
+        let micInitError = null;
         let isBusy = false; // 防止重複觸發
+        let isCountdown = false;
+        let countdownTimer = null;
         let isRecording = false;
+        let sttModelKey = null;
+        let currentLang = 'zh';
+        let currentLangMode = 'auto';
+        let languageModesCache = null;
+        let connectionState = 'connecting';
+        let transcriptBackupState = null;
+        let hasEnhancedTranscript = false;
+        let isTranscriptEditing = false;
+        let transcriptRawLines = [];
+        let transcriptProofreadLines = [];
+        let transcriptLineNodes = [];
+        let transcriptRenderTimer = null;
+        let transcriptDirtyIndices = new Set();
+        let latestStoragePath = '';
+        let lastMeetingNameUsed = '';
+        let transcriptOpsLockedBySummary = false;
+        let summaryRequestInFlight = 0;
+
+        const I18N = {
+            zh: {
+                app_title: 'AI 會議助理',
+                status_ready: '準備就緒',
+                status_recording: '錄音辨識中...',
+                status_paused: '已暫停',
+                status_processing: '正在處理最後音頻...',
+                conn_connected: '',
+                conn_disconnected: '已斷線',
+                conn_connecting: '連線中...',
+                countdown_start: '即將開始',
+                meeting_placeholder: '輸入會議名稱...',
+                meeting_label: '會議名稱',
+                ui_lang: '介面語言',
+                save_audio: '儲存錄音檔',
+                start_meeting: '開始會議',
+                stop: '停止',
+                pause: '暫停',
+                resume: '繼續',
+                processing: '處理中...',
+                get_mic: '取得麥克風...',
+                transcript_title: '即時逐字稿',
+                summary_title: 'AI 智慧摘要',
+                model_label: '模型',
+                lang_label: '語言',
+                lang_auto: '自動偵測',
+                lang_zh: '中文',
+                lang_en: '英文',
+                lang_ja: '日文',
+                lang_ko: '韓文',
+                lang_th: '泰文',
+                lang_tl: '菲律賓文',
+                lang_id: '印尼文',
+                lang_vi: '越南文',
+                empty_transcript: '點擊「開始會議」啟動收音',
+                summary_empty: '錄音結束後，點選上方分頁產生 AI 摘要',
+                summary_full: '全文摘要',
+                summary_key: '重點條列',
+                summary_action: '待辦清單',
+                summary_all: '全部摘要',
+                summary_loading: '正在呼叫本地摘要模型進行分析...',
+                summary_loading_for: '正在產生：{title}',
+                export_transcript: '匯出逐字稿',
+                edit_transcript: '編輯',
+                edit_done: '完成',
+                enhance_transcript: '文字校對',
+                undo_enhance: '復原',
+                enhance_started: '正在進行文字校對...',
+                enhance_done: '文字校對完成',
+                export_summary: '匯出摘要',
+                export_full: '匯出全文摘要',
+                export_key: '匯出重點條列',
+                export_action: '匯出待辦清單',
+                export_all: '匯出全部摘要',
+                usage_guide: '使用說明',
+                contact_us: '聯絡我們',
+                storage_path_label: '目前存放位置：',
+                open_storage_folder: '開啟存放資料夾',
+                alert_need_meeting_name: '請先輸入會議名稱，再開始錄音。',
+                alert_transcript_locked_after_summary: '已選擇摘要後，請重新開始錄音才可編輯／校對／復原逐字稿。',
+                alert_need_new_meeting_name: '請輸入新的會議名稱（不可與上一場相同）。',
+                alert_need_transcript_summary: '目前沒有逐字稿內容，請先完成錄音或輸入文字後再產生摘要。',
+                alert_need_transcript_export: '目前沒有逐字稿內容，無法匯出逐字稿。',
+                alert_need_summary_export: '尚未產生對應摘要內容，請先點選摘要分頁產生後再匯出。',
+                alert_mic_error: '無法存取麥克風: ',
+                alert_switch_model_blocked: '錄音中無法切換模型，請先停止再切換。',
+                alert_switch_language_blocked: '錄音中無法切換語言，請先停止再切換。',
+                alert_edit_blocked: '錄音中無法編輯逐字稿，請先停止。',
+                toast_model_switched: '模型已切換：{model}',
+                model_unready: ' (未就緒)',
+            },
+            en: {
+                app_title: 'AI Meeting Assistant',
+                status_ready: 'Ready',
+                status_recording: 'Recording...',
+                status_paused: 'Paused',
+                status_processing: 'Processing final audio...',
+                conn_connected: '',
+                conn_disconnected: 'Disconnected',
+                conn_connecting: 'Connecting...',
+                countdown_start: 'Starting in',
+                meeting_placeholder: 'Meeting name...',
+                meeting_label: 'Meeting',
+                ui_lang: 'UI Language',
+                save_audio: 'Save audio',
+                start_meeting: 'Start',
+                stop: 'Stop',
+                pause: 'Pause',
+                resume: 'Resume',
+                processing: 'Processing...',
+                get_mic: 'Getting microphone...',
+                transcript_title: 'Live Transcript',
+                summary_title: 'AI Summary',
+                model_label: 'Model',
+                lang_label: 'Language',
+                lang_auto: 'Auto',
+                lang_zh: 'Chinese',
+                lang_en: 'English',
+                lang_ja: 'Japanese',
+                lang_ko: 'Korean',
+                lang_th: 'Thai',
+                lang_tl: 'Filipino',
+                lang_id: 'Indonesian',
+                lang_vi: 'Vietnamese',
+                empty_transcript: 'Click "Start" to begin recording',
+                summary_empty: 'After recording, choose a tab to generate AI summaries',
+                summary_full: 'Full Summary',
+                summary_key: 'Key Points',
+                summary_action: 'Action Items',
+                summary_all: 'All Summaries',
+                summary_loading: 'Running local summary model for analysis...',
+                summary_loading_for: 'Generating: {title}',
+                export_transcript: 'Export Transcript',
+                edit_transcript: 'Edit',
+                edit_done: 'Done',
+                enhance_transcript: 'Text Cleanup',
+                undo_enhance: 'Undo',
+                enhance_started: 'Cleaning transcript text...',
+                enhance_done: 'Transcript cleanup completed',
+                export_summary: 'Export Summary',
+                export_full: 'Export Full Summary',
+                export_key: 'Export Key Points',
+                export_action: 'Export Action Items',
+                export_all: 'Export All Summaries',
+                usage_guide: 'User Guide',
+                contact_us: 'Contact Us',
+                storage_path_label: 'Storage path:',
+                open_storage_folder: 'Open folder',
+                alert_need_meeting_name: 'Please enter a meeting name before recording.',
+                alert_transcript_locked_after_summary: 'After selecting summary, restart recording before editing/cleanup/undo transcript.',
+                alert_need_new_meeting_name: 'Please enter a new meeting name (cannot be the same as the previous one).',
+                alert_need_transcript_summary: 'No transcript text yet. Record or enter transcript content before generating summaries.',
+                alert_need_transcript_export: 'No transcript text yet. Cannot export transcript.',
+                alert_need_summary_export: 'No matching summary content yet. Generate the selected summary first.',
+                alert_mic_error: 'Microphone access failed: ',
+                alert_switch_model_blocked: 'Cannot change model while recording. Stop first.',
+                alert_switch_language_blocked: 'Cannot change language while recording. Stop first.',
+                alert_edit_blocked: 'Editing is disabled while recording. Stop first.',
+                toast_model_switched: 'Model switched: {model}',
+                model_unready: ' (Unavailable)',
+            },
+        };
+
+        function t(key) {
+            return (I18N[currentLang] && I18N[currentLang][key]) || key;
+        }
+
+        function tFormat(key, vars) {
+            let text = t(key);
+            if (vars) {
+                Object.keys(vars).forEach(k => {
+                    text = text.replace(`{${k}}`, vars[k]);
+                });
+            }
+            return text;
+        }
+
+        function applyI18n() {
+            document.documentElement.lang = currentLang === 'zh' ? 'zh-TW' : 'en';
+            document.title = `${t('app_title')} v1.1.0`;
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                el.textContent = t(key);
+            });
+            document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+                const key = el.getAttribute('data-i18n-placeholder');
+                el.setAttribute('placeholder', t(key));
+            });
+            if (languageModesCache) {
+                applyLanguageOptions(languageModesCache, currentLangMode);
+            }
+            setConnectionStatus(connectionState);
+        }
 
         // ── SocketIO 事件監聽 ───────────────────────────
 
+        function setConnectionStatus(state) {
+            connectionState = state;
+            const statusMap = {
+                connected: { text: t('conn_connected'), dot: 'bg-green-400' },
+                disconnected: { text: t('conn_disconnected'), dot: 'bg-red-400' },
+                connecting: { text: t('conn_connecting'), dot: 'bg-slate-300' },
+            };
+            const cfg = statusMap[state] || statusMap.connecting;
+            const statusText = document.getElementById('status-text');
+            const statusDot = document.getElementById('status-dot');
+            const footerText = document.getElementById('conn-text');
+            const footerDot = document.getElementById('conn-dot');
+            if (statusText) statusText.textContent = cfg.text;
+            if (statusDot) statusDot.className = `w-2 h-2 rounded-full ${cfg.dot}`;
+            if (footerText) footerText.textContent = cfg.text;
+            if (footerDot) footerDot.className = `w-2 h-2 rounded-full ${cfg.dot}`;
+        }
+
         socket.on('connect', () => {
-            document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-green-400';
-            document.getElementById('conn-text').textContent = '已連線';
+            setConnectionStatus('connected');
         });
 
         socket.on('disconnect', () => {
-            document.getElementById('conn-dot').className = 'w-2 h-2 rounded-full bg-red-400';
-            document.getElementById('conn-text').textContent = '已斷線';
+            setConnectionStatus('disconnected');
         });
 
         socket.on('state_changed', (data) => {
             currentState = data.state;
+            if (data.stt_models) {
+                applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
+            }
+            if (data.language_modes) {
+                applyLanguageOptions(data.language_modes, data.language_mode);
+            }
             updateUI();
+            refreshStoragePath();
         });
 
+
+        socket.on('stt_model_changed', (data) => {
+            if (data.stt_models) {
+                applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
+            }
+            if (data.stt_model && data.stt_model.label) {
+                showToast(tFormat('toast_model_switched', { model: data.stt_model.label }));
+            }
+        });
+
+        socket.on('language_mode_changed', (data) => {
+            if (data.language_modes) {
+                applyLanguageOptions(data.language_modes, data.language_mode);
+            }
+        });
+
+
         socket.on('transcript_update', (data) => {
+            clearPartialLine();
             addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
+        });
+
+        socket.on('transcript_partial', (data) => {
+            if (data && data.text) {
+                showPartialLine(data.timestamp || '', data.text);
+            }
+        });
+
+        socket.on('transcript_partial_clear', () => {
+            clearPartialLine();
         });
 
         socket.on('proofread_update', (data) => {
@@ -218,28 +692,63 @@
         });
 
         socket.on('summary_result', (data) => {
+            endSummaryRequest();
+            summaryCache[data.mode] = data.content;
+            if (summaryViewMode === 'single' && activeSingleSummaryMode && data.mode !== activeSingleSummaryMode) {
+                return;
+            }
             showSummary(data.mode, data.content);
+        });
+
+        socket.on('enhance_done', () => {
+            showToast(t('enhance_done'));
         });
 
         socket.on('export_ready', (data) => {
             if (data.files && Array.isArray(data.files)) {
-                data.files.forEach(file => downloadBlob(file.filename, file.content));
+                const firstPath = data.files[0] && data.files[0].saved_path;
+                if (firstPath) {
+                    updateStoragePathDisplay(firstPath);
+                    showToast(`已同步寫入：${firstPath}`);
+                } else {
+                    showToast('已完成匯出（僅寫入專案資料夾）');
+                }
                 return;
             }
-            downloadBlob(data.filename, data.content);
+            if (data.saved_path) {
+                updateStoragePathDisplay(data.saved_path);
+                showToast(`已同步寫入：${data.saved_path}`);
+            } else {
+                showToast('已完成匯出（僅寫入專案資料夾）');
+            }
+        });
+
+        socket.on('storage_path', (data) => {
+            updateStoragePathDisplay((data && data.path) || '');
+        });
+
+        socket.on('folder_opened', (data) => {
+            const path = (data && data.path) || '';
+            if (!path) return;
+            updateStoragePathDisplay(path);
+            showToast(`已開啟資料夾：${path}`);
         });
 
         socket.on('error', (data) => {
+            if (summaryRequestInFlight > 0) {
+                summaryRequestInFlight = 0;
+                setTranscriptOpsLocked(false);
+            }
             alert(data.message);
         });
 
         // ── 主控制邏輯 ─────────────────────────────────
 
         function mainAction() {
-            if (isBusy) return;
+            if (isBusy || isCountdown) return;
             switch (currentState) {
                 case 'idle':
-                    startRecording();
+                    startRecordingWithCountdown();
                     break;
                 case 'recording':
                     pauseRecording();
@@ -250,14 +759,53 @@
             }
         }
 
-        async function startRecording() {
+        function startRecordingWithCountdown() {
+            if (isBusy || isCountdown) return;
+            const meetingInput = document.getElementById('meeting-name');
+            const meetingName = meetingInput.value.trim();
+            if (!meetingName) {
+                alert(t('alert_need_meeting_name'));
+                return;
+            }
+            if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
+                alert(t('alert_need_new_meeting_name'));
+                meetingInput.focus();
+                meetingInput.select();
+                return;
+            }
+
+            const btn = document.getElementById('main-btn');
+            isCountdown = true;
+            btn.disabled = true;
+
+            let remaining = 3;
+            const renderCountdown = () => {
+                btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>${t('countdown_start')} ${remaining}</span>`;
+                lucide.createIcons();
+            };
+            renderCountdown();
+
+            countdownTimer = window.setInterval(() => {
+                remaining -= 1;
+                if (remaining <= 0) {
+                    window.clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    isCountdown = false;
+                    startRecordingNow();
+                    return;
+                }
+                renderCountdown();
+            }, 1000);
+        }
+
+        async function startRecordingNow() {
             if (isBusy) return;
             isBusy = true;
 
             const meetingInput = document.getElementById('meeting-name');
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
-                alert('請先輸入會議名稱，再開始錄音。');
+                alert(t('alert_need_meeting_name'));
                 isBusy = false;
                 return;
             }
@@ -265,29 +813,16 @@
             // 立即禁用按鈕，避免重複點擊觸發多次 getUserMedia
             const btn = document.getElementById('main-btn');
             btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>取得麥克風...</span>';
+            btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>${t('get_mic')}</span>`;
             lucide.createIcons();
 
             try {
-                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                audioContext = new AudioCtx({ sampleRate: 16000 });
-                const source = audioContext.createMediaStreamSource(audioStream);
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-                processor.onaudioprocess = (e) => {
-                    if (!isRecording) return;
-                    const input = e.inputBuffer.getChannelData(0);
-                    const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
-                    const pcm16 = floatTo16BitPCM(downsampled);
-                    socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
-                        // console.log('audio_chunk ack:', ack);
-                    });
-                };
-
-                source.connect(processor);
-                processor.connect(audioContext.destination);
+                if (!micReady || !processor || !audioContext) {
+                    await initMic();
+                }
+                if (micInitError) {
+                    throw new Error(micInitError);
+                }
 
                 // 若需要儲存錄音檔，啟用 MediaRecorder 並串流到後端
                 const saveAudio = document.getElementById('save-audio').checked;
@@ -314,6 +849,7 @@
                 socket.emit('start_recording', {
                     meeting_name: meetingName,
                     save_audio: saveAudio,
+                    language_mode: currentLangMode,
                 });
                 isRecording = true;
                 meetingInput.disabled = true;
@@ -321,16 +857,33 @@
                 // 清空逐字稿區域
                 const container = document.getElementById('transcript-container');
                 container.innerHTML = '';
+                clearPartialLine();
+                if (transcriptRenderTimer) {
+                    window.clearTimeout(transcriptRenderTimer);
+                    transcriptRenderTimer = null;
+                }
+                transcriptRawLines = [];
+                transcriptProofreadLines = [];
+                transcriptLineNodes = [];
+                transcriptDirtyIndices = new Set();
+                transcriptBackupState = null;
+                hasEnhancedTranscript = false;
+                setEnhanceUndoVisible(false);
+                isTranscriptEditing = false;
+                summaryCache = { full: null, key_points: null, action_items: null };
+                summaryCacheSourceText = '';
+                summaryViewMode = 'single';
+                clearSummaryLocksForNewRecording();
                 // 重置摘要區域
                 document.getElementById('summary-container').innerHTML = `
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-300 text-center p-10">
                         <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-10"></i>
-                        <p>錄音結束後，點選上方分頁產生 AI 摘要</p>
+                        <p>${t('summary_empty')}</p>
                     </div>
                 `;
                 lucide.createIcons();
             } catch (err) {
-                alert('無法存取麥克風: ' + err.message);
+                alert(t('alert_mic_error') + err.message);
                 // 還原按鈕狀態
                 currentState = 'idle';
                 updateUI();
@@ -357,97 +910,422 @@
         }
 
         function stopRecording() {
+            const meetingInput = document.getElementById('meeting-name');
+            const previousMeetingName = meetingInput.value.trim();
             isRecording = false;
             if (processor) {
                 processor.disconnect();
                 processor = null;
             }
+            if (mediaRecorder) {
+                mediaRecorder.stop();
+            }
+            if (audioContext && audioContext.state === 'running') {
+                audioContext.suspend();
+            }
+            socket.emit('stop_recording');
+            if (previousMeetingName) {
+                lastMeetingNameUsed = previousMeetingName;
+            }
+            meetingInput.value = '';
+            meetingInput.disabled = false;
+            refreshStoragePath();
+            meetingInput.focus();
+        }
+
+        async function initMic() {
+            try {
+                if (audioContext && audioContext.state === 'closed') {
+                    audioContext = null;
+                    audioSourceNode = null;
+                    processor = null;
+                }
+
+                if (!audioStream) {
+                    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
+
+                if (!audioContext) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    audioContext = new AudioCtx({ sampleRate: 16000 });
+                    audioSourceNode = null;
+                    processor = null;
+                }
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                if (!audioSourceNode) {
+                    audioSourceNode = audioContext.createMediaStreamSource(audioStream);
+                }
+
+                if (!processor) {
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                    processor.onaudioprocess = (e) => {
+                        if (!isRecording) return;
+                        const input = e.inputBuffer.getChannelData(0);
+                        const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
+                        const pcm16 = floatTo16BitPCM(downsampled);
+                        socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
+                            // console.log('audio_chunk ack:', ack);
+                        });
+                    };
+
+                    audioSourceNode.connect(processor);
+                    processor.connect(audioContext.destination);
+                }
+
+                micReady = true;
+                micInitError = null;
+            } catch (err) {
+                micInitError = err && err.message ? err.message : String(err);
+                micReady = false;
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioSourceNode) {
+                audioSourceNode.disconnect();
+                audioSourceNode = null;
+            }
             if (audioContext) {
                 audioContext.close();
                 audioContext = null;
-            }
-            if (mediaRecorder) {
-                mediaRecorder.stop();
             }
             if (audioStream) {
                 audioStream.getTracks().forEach(t => t.stop());
                 audioStream = null;
             }
-            socket.emit('stop_recording');
-            const meetingInput = document.getElementById('meeting-name');
-            meetingInput.disabled = false;
-        }
+        });
 
         // ── UI 更新 ────────────────────────────────────
 
         function updateUI() {
             const btn = document.getElementById('main-btn');
             const stopBtn = document.getElementById('stop-btn');
-            const statusText = document.getElementById('status-text');
-            const statusIcon = document.getElementById('status-icon');
-
-            // 清除動畫 class
-            statusIcon.classList.remove('text-red-500', 'animate-pulse-red', 'text-yellow-500', 'text-purple-500', 'text-slate-400');
+            const modelSelect = document.getElementById('stt-model-select');
+            const langSelect = document.getElementById('lang-mode-select');
+            const saveAudioCheckbox = document.getElementById('save-audio');
+            const editBtn = document.getElementById('edit-transcript-btn');
+            const editDoneBtn = document.getElementById('edit-done-btn');
+            const enhanceBtn = document.getElementById('enhance-btn');
+            const enhanceUndoBtn = document.getElementById('enhance-undo-btn');
 
             switch (currentState) {
                 case 'idle':
-                    btn.innerHTML = '<i data-lucide="mic" class="w-4 h-4"></i> <span>開始會議</span>';
-                    btn.className = 'flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-6 py-2 rounded-xl transition-all shadow-lg shadow-orange-500/30';
+                    btn.innerHTML = `<i data-lucide="mic" class="w-4 h-4"></i> <span>${t('start_meeting')}</span>`;
+                    btn.className = 'flex items-center gap-2 text-white px-8 py-3 text-lg rounded-xl transition-all primary-cta';
                     stopBtn.classList.add('hidden');
-                    statusText.textContent = '準備就緒';
-                    statusIcon.classList.add('text-slate-500');
                     break;
 
                 case 'recording':
-                    btn.innerHTML = '<i data-lucide="pause" class="w-4 h-4"></i> <span>暫停</span>';
-                    btn.className = 'flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-xl transition-all shadow-lg shadow-emerald-500/30';
+                    btn.innerHTML = `<i data-lucide="pause" class="w-4 h-4"></i> <span>${t('pause')}</span>`;
+                    btn.className = 'flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-emerald-500/30';
                     stopBtn.classList.remove('hidden');
-                    statusText.textContent = '錄音辨識中...';
-                    statusIcon.classList.add('text-emerald-600', 'animate-pulse-red');
                     break;
 
                 case 'paused':
-                    btn.innerHTML = '<i data-lucide="play" class="w-4 h-4"></i> <span>繼續</span>';
-                    btn.className = 'flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-6 py-2 rounded-xl transition-all shadow-lg shadow-amber-400/30';
+                    btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> <span>${t('resume')}</span>`;
+                    btn.className = 'flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-amber-400/30';
                     stopBtn.classList.remove('hidden');
-                    statusText.textContent = '已暫停';
-                    statusIcon.classList.add('text-yellow-500');
                     break;
 
                 case 'stopped':
-                    btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>處理中...</span>';
+                    btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>${t('processing')}</span>`;
                     btn.disabled = true;
                     stopBtn.classList.add('hidden');
-                    statusText.textContent = '正在處理最後音頻...';
-                    statusIcon.classList.add('text-orange-500');
                     break;
             }
 
             btn.disabled = currentState === 'stopped';
+            if (modelSelect) {
+                modelSelect.disabled = currentState !== 'idle';
+                modelSelect.classList.toggle('opacity-60', currentState !== 'idle');
+                modelSelect.classList.toggle('cursor-not-allowed', currentState !== 'idle');
+            }
+            if (langSelect) {
+                langSelect.disabled = currentState !== 'idle';
+                langSelect.classList.toggle('opacity-60', currentState !== 'idle');
+                langSelect.classList.toggle('cursor-not-allowed', currentState !== 'idle');
+            }
+            if (saveAudioCheckbox) {
+                const locked = currentState !== 'idle';
+                saveAudioCheckbox.disabled = locked;
+                saveAudioCheckbox.classList.toggle('opacity-60', locked);
+                saveAudioCheckbox.classList.toggle('cursor-not-allowed', locked);
+            }
+            const transcriptBusy = currentState !== 'idle';
+            [editBtn, editDoneBtn, enhanceBtn, enhanceUndoBtn].forEach((el) => {
+                if (!el || el.classList.contains('hidden')) return;
+                const locked = transcriptBusy || transcriptOpsLockedBySummary;
+                el.disabled = locked;
+                el.classList.toggle('opacity-50', locked);
+                el.classList.toggle('cursor-not-allowed', locked);
+            });
             lucide.createIcons();
         }
 
+
         // ── 逐字稿操作 ─────────────────────────────────
 
-        function addTranscriptLine(index, timestamp, text, speaker) {
+        function ensureTranscriptBlock() {
             const container = document.getElementById('transcript-container');
+            let div = document.getElementById('transcript-block');
+            if (!div) {
+                div = document.createElement('div');
+                div.id = 'transcript-block';
+                div.className = 'bg-white border-l-3 border-blue-200 rounded-r-lg px-3 py-3';
+                div.innerHTML = `<div id="transcript-lines" class="space-y-1"></div>`;
+                container.appendChild(div);
+            }
+            return div;
+        }
 
-            const div = document.createElement('div');
-            div.id = `line-${index}`;
-            div.className = `flex gap-4 bg-white border-l-3 border-blue-200 rounded-r-lg px-3 py-2`;
-            div.innerHTML = `
-                <span class="text-xs font-mono text-slate-400 mt-0.5 shrink-0">${timestamp}</span>
-                <p class="text-slate-900 leading-relaxed text-sm" id="text-${index}">${escapeHtml(text)}</p>
-            `;
-            container.appendChild(div);
+        function ensureTranscriptLinesRoot() {
+            const div = ensureTranscriptBlock();
+            let linesRoot = document.getElementById('transcript-lines');
+            if (!linesRoot) {
+                linesRoot = document.createElement('div');
+                linesRoot.id = 'transcript-lines';
+                linesRoot.className = 'space-y-1';
+                div.appendChild(linesRoot);
+            }
+            return linesRoot;
+        }
+
+        function normalizeTranscriptLine(text) {
+            return (text || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function getMergedTranscriptLine(index) {
+            return normalizeTranscriptLine(transcriptProofreadLines[index] || transcriptRawLines[index] || '');
+        }
+
+        function findNextLineNode(index) {
+            for (let i = index + 1; i < transcriptLineNodes.length; i++) {
+                if (transcriptLineNodes[i]) return transcriptLineNodes[i];
+            }
+            return null;
+        }
+
+        function renderTranscriptFromLines(forceFull = false) {
+            const container = document.getElementById('transcript-container');
+            const div = ensureTranscriptBlock();
+            const linesRoot = ensureTranscriptLinesRoot();
+            if (!linesRoot) return;
+            if (forceFull) {
+                const fullMax = Math.max(
+                    transcriptRawLines.length,
+                    transcriptProofreadLines.length,
+                    transcriptLineNodes.length
+                );
+                for (let i = 0; i < fullMax; i++) {
+                    transcriptDirtyIndices.add(i);
+                }
+            }
+            if (!transcriptDirtyIndices.size) return;
+            const dirty = Array.from(transcriptDirtyIndices)
+                .filter((idx) => Number.isInteger(idx) && idx >= 0)
+                .sort((a, b) => a - b);
+            transcriptDirtyIndices.clear();
+
+            for (const index of dirty) {
+                const mergedLine = getMergedTranscriptLine(index);
+                let lineNode = transcriptLineNodes[index] || null;
+                if (!mergedLine) {
+                    if (lineNode && lineNode.parentElement) {
+                        lineNode.parentElement.removeChild(lineNode);
+                    }
+                    transcriptLineNodes[index] = null;
+                    continue;
+                }
+                if (!lineNode) {
+                    lineNode = document.createElement('p');
+                    lineNode.className = 'text-slate-900 leading-relaxed text-sm';
+                    lineNode.dataset.index = String(index);
+                    const next = findNextLineNode(index);
+                    if (next) {
+                        linesRoot.insertBefore(lineNode, next);
+                    } else {
+                        linesRoot.appendChild(lineNode);
+                    }
+                    transcriptLineNodes[index] = lineNode;
+                }
+                if (lineNode.textContent !== mergedLine) {
+                    lineNode.textContent = mergedLine;
+                }
+            }
+
+            if (div && transcriptProofreadLines.some(Boolean)) {
+                div.classList.add('proofread-updated');
+            } else if (div) {
+                div.classList.remove('proofread-updated');
+            }
             container.scrollTop = container.scrollHeight;
         }
 
+        function scheduleTranscriptRender() {
+            if (transcriptRenderTimer) return;
+            transcriptRenderTimer = window.setTimeout(() => {
+                transcriptRenderTimer = null;
+                renderTranscriptFromLines();
+            }, 80);
+        }
+
+        function flushTranscriptRender() {
+            if (!transcriptRenderTimer) return;
+            window.clearTimeout(transcriptRenderTimer);
+            transcriptRenderTimer = null;
+            renderTranscriptFromLines();
+        }
+
+        function addTranscriptLine(index, timestamp, text, speaker) {
+            const cleaned = normalizeTranscriptLine(text);
+            if (!cleaned) return;
+            const parsedIndex = Number(index);
+            const i = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : transcriptRawLines.length;
+            transcriptRawLines[i] = cleaned;
+            transcriptDirtyIndices.add(i);
+            scheduleTranscriptRender();
+        }
+
+        function setEnhanceUndoVisible(isVisible) {
+            const undoBtn = document.getElementById('enhance-undo-btn');
+            if (!undoBtn) return;
+            if (isVisible) {
+                undoBtn.classList.remove('hidden');
+            } else {
+                undoBtn.classList.add('hidden');
+            }
+            if (!undoBtn.classList.contains('hidden')) {
+                undoBtn.disabled = transcriptOpsLockedBySummary;
+                undoBtn.classList.toggle('opacity-50', transcriptOpsLockedBySummary);
+                undoBtn.classList.toggle('cursor-not-allowed', transcriptOpsLockedBySummary);
+            }
+        }
+
+        function setTranscriptOpsLocked(locked) {
+            transcriptOpsLockedBySummary = Boolean(locked);
+            ['edit-transcript-btn', 'edit-done-btn', 'enhance-btn', 'enhance-undo-btn'].forEach((id) => {
+                const btn = document.getElementById(id);
+                if (!btn || btn.classList.contains('hidden')) return;
+                btn.disabled = transcriptOpsLockedBySummary;
+                btn.classList.toggle('opacity-50', transcriptOpsLockedBySummary);
+                btn.classList.toggle('cursor-not-allowed', transcriptOpsLockedBySummary);
+            });
+        }
+
+        function beginSummaryRequest(count = 1) {
+            summaryRequestInFlight += Math.max(1, Number(count) || 1);
+            setTranscriptOpsLocked(true);
+        }
+
+        function endSummaryRequest() {
+            summaryRequestInFlight = Math.max(0, summaryRequestInFlight - 1);
+            setTranscriptOpsLocked(summaryRequestInFlight > 0);
+        }
+
+        function clearSummaryLocksForNewRecording() {
+            summaryRequestInFlight = 0;
+            setTranscriptOpsLocked(false);
+        }
+
+        function guardTranscriptOpsLocked() {
+            if (!transcriptOpsLockedBySummary) return false;
+            showToast('摘要產生中，請稍候再編輯逐字稿。');
+            return true;
+        }
+
+        function startEditTranscript() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
+            renderTranscriptFromLines(true);
+            const linesRoot = document.getElementById('transcript-lines');
+            if (!linesRoot || !getTranscriptForSummary()) {
+                showToast(t('empty_transcript'));
+                return;
+            }
+            isTranscriptEditing = true;
+            linesRoot.setAttribute('contenteditable', 'true');
+            linesRoot.focus();
+            linesRoot.classList.add('outline-none', 'ring-2', 'ring-orange-300', 'rounded-md', 'p-2', 'bg-orange-50/40');
+            document.getElementById('edit-transcript-btn')?.classList.add('hidden');
+            document.getElementById('edit-done-btn')?.classList.remove('hidden');
+        }
+
+        function finishEditTranscript() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
+            const linesRoot = document.getElementById('transcript-lines');
+            if (!linesRoot) return;
+            const oldMax = Math.max(
+                transcriptRawLines.length,
+                transcriptProofreadLines.length,
+                transcriptLineNodes.length
+            );
+            const editedLines = (linesRoot.innerText || '')
+                .split(/\n+/)
+                .map((line) => normalizeTranscriptLine(line))
+                .filter(Boolean);
+            transcriptRawLines = editedLines.slice();
+            transcriptProofreadLines = [];
+            transcriptLineNodes = [];
+            transcriptDirtyIndices = new Set();
+            const nextMax = Math.max(oldMax, editedLines.length);
+            for (let i = 0; i < nextMax; i++) {
+                transcriptDirtyIndices.add(i);
+            }
+            linesRoot.innerHTML = '';
+            isTranscriptEditing = false;
+            linesRoot.removeAttribute('contenteditable');
+            linesRoot.classList.remove('outline-none', 'ring-2', 'ring-orange-300', 'rounded-md', 'p-2', 'bg-orange-50/40');
+            document.getElementById('edit-transcript-btn')?.classList.remove('hidden');
+            document.getElementById('edit-done-btn')?.classList.add('hidden');
+            renderTranscriptFromLines();
+        }
+
         function updateProofread(index, proofread) {
-            const textEl = document.getElementById(`text-${index}`);
-            if (textEl) {
-                textEl.textContent = proofread;
-                textEl.parentElement.classList.add('proofread-updated');
+            if (!proofread) return;
+            const cleaned = normalizeTranscriptLine(proofread);
+            if (!cleaned) return;
+            const parsedIndex = Number(index);
+            const i = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : transcriptProofreadLines.length;
+            transcriptProofreadLines[i] = cleaned;
+            transcriptDirtyIndices.add(i);
+            scheduleTranscriptRender();
+        }
+
+        function showPartialLine(timestamp, text) {
+            const container = document.getElementById('transcript-container');
+            let div = document.getElementById('partial-line');
+            if (!div) {
+                div = document.createElement('div');
+                div.id = 'partial-line';
+                div.className = 'flex bg-white rounded-r-lg px-3 py-2 partial-line';
+                container.appendChild(div);
+            }
+            div.innerHTML = `
+                <p class="text-slate-600 leading-relaxed text-sm">${escapeHtml(text)}</p>
+            `;
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function clearPartialLine() {
+            const div = document.getElementById('partial-line');
+            if (div && div.parentElement) {
+                div.parentElement.removeChild(div);
             }
         }
 
@@ -488,10 +1366,156 @@
             return new Int16Array(buffer);
         }
 
+        function applyModelOptions(models, currentKey) {
+            if (!Array.isArray(models)) return;
+            const select = document.getElementById('stt-model-select');
+            if (!select) return;
+
+            const previous = sttModelKey;
+            select.innerHTML = '';
+            let currentEngine = '';
+            models.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.key;
+                opt.textContent = item.label + (item.available === false ? t('model_unready') : '');
+                if (item.available === false) {
+                    opt.disabled = true;
+                }
+                select.appendChild(opt);
+                if (item.key === currentKey) {
+                    currentEngine = item.engine || '';
+                }
+            });
+
+            if (currentKey) {
+                select.value = currentKey;
+                sttModelKey = currentKey;
+            } else if (previous) {
+                select.value = previous;
+                sttModelKey = previous;
+            } else {
+                sttModelKey = select.value;
+            }
+
+            void currentEngine;
+        }
+
+        function languageLabel(key) {
+            const map = {
+                auto: t('lang_auto'),
+                zh: t('lang_zh'),
+                en: t('lang_en'),
+                ja: t('lang_ja'),
+                ko: t('lang_ko'),
+                th: t('lang_th'),
+                tl: t('lang_tl'),
+                id: t('lang_id'),
+                vi: t('lang_vi'),
+            };
+            return map[key] || key;
+        }
+
+        function applyLanguageOptions(modes, currentKey) {
+            if (!Array.isArray(modes)) return;
+            const select = document.getElementById('lang-mode-select');
+            if (!select) return;
+
+            languageModesCache = modes;
+            select.innerHTML = '';
+            modes.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item.key;
+                opt.textContent = languageLabel(item.key);
+                select.appendChild(opt);
+            });
+            const nextKey = currentKey || currentLangMode || 'auto';
+            select.value = nextKey;
+            currentLangMode = select.value;
+        }
+
+
         // ── 摘要操作 ────────────────────────────────────
 
+        function getTranscriptForSummary() {
+            if (isTranscriptEditing) {
+                const linesRoot = document.getElementById('transcript-lines');
+                return normalizeTranscriptLine(linesRoot ? linesRoot.innerText : '');
+            }
+            const maxLen = Math.max(transcriptRawLines.length, transcriptProofreadLines.length);
+            const merged = [];
+            for (let i = 0; i < maxLen; i++) {
+                const line = getMergedTranscriptLine(i);
+                if (line) merged.push(line);
+            }
+            return merged.join('\n').trim();
+        }
+
         function requestSummary(mode) {
-            // 更新 tab 樣式
+            const transcriptText = getTranscriptForSummary();
+            if (!transcriptText) {
+                showToast(t('alert_need_transcript_summary'));
+                return;
+            }
+            summaryViewMode = 'single';
+            resetSummaryCacheForTranscript(transcriptText);
+            activeSingleSummaryMode = mode;
+            applySummaryTabState(mode);
+            if (summaryCache[mode]) {
+                showSummary(mode, summaryCache[mode]);
+                return;
+            }
+            if (summaryRequestInFlight > 0) {
+                const loadingTitle = summaryTitle(mode);
+                document.getElementById('summary-container').innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center space-y-4">
+                        <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
+                        <p class="text-orange-600 font-medium animate-pulse">${tFormat('summary_loading_for', { title: loadingTitle })}</p>
+                    </div>
+                `;
+                return;
+            }
+            beginSummaryRequest(1);
+            summaryCache[mode] = null;
+
+            // 顯示 loading
+            const loadingTitle = summaryTitle(mode);
+            document.getElementById('summary-container').innerHTML = `
+                <div class="h-full flex flex-col items-center justify-center space-y-4">
+                    <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
+                    <p class="text-orange-600 font-medium animate-pulse">${tFormat('summary_loading_for', { title: loadingTitle })}</p>
+                </div>
+            `;
+
+            socket.emit('request_summary', {
+                mode: mode,
+                transcript_override: transcriptText,
+            });
+        }
+
+        function summaryTitle(mode) {
+            if (mode === 'full') return t('summary_full');
+            if (mode === 'key_points') return t('summary_key');
+            if (mode === 'action_items') return t('summary_action');
+            return mode;
+        }
+
+        let summaryCache = {
+            full: null,
+            key_points: null,
+            action_items: null,
+        };
+        let summaryCacheSourceText = '';
+        let summaryViewMode = 'single';
+        let activeSingleSummaryMode = 'full';
+
+        function resetSummaryCacheForTranscript(transcriptText) {
+            if (summaryCacheSourceText === transcriptText) return;
+            summaryCacheSourceText = transcriptText;
+            summaryCache = { full: null, key_points: null, action_items: null };
+            activeSingleSummaryMode = 'full';
+        }
+
+        function applySummaryTabState(mode) {
             document.querySelectorAll('.summary-tab').forEach(tab => {
                 if (tab.dataset.mode === mode) {
                     tab.className = tab.className.replace('tab-inactive', 'tab-active');
@@ -499,43 +1523,41 @@
                     tab.className = tab.className.replace('tab-active', 'tab-inactive');
                 }
             });
-
-            // 顯示 loading
-            document.getElementById('summary-container').innerHTML = `
-                <div class="h-full flex flex-col items-center justify-center space-y-4">
-                    <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
-                    <p class="text-orange-600 font-medium animate-pulse">正在調用 Ollama API 進行分析...</p>
-                </div>
-            `;
-
-            socket.emit('request_summary', { mode: mode });
         }
 
-        const SUMMARY_TITLES = {
-            full: '全文摘要',
-            key_points: '重點條列',
-            action_items: '待辦清單',
-        };
-
-        let summaryCache = {
-            full: null,
-            key_points: null,
-            action_items: null,
-        };
+        function renderAllSummariesFromCache() {
+            renderAllSummarySkeleton();
+            if (summaryCache.full) showSummary('full', summaryCache.full);
+            if (summaryCache.key_points) showSummary('key_points', summaryCache.key_points);
+            if (summaryCache.action_items) showSummary('action_items', summaryCache.action_items);
+        }
 
         function requestAllSummaries() {
+            if (summaryRequestInFlight > 0) return;
+            const transcriptOverride = getTranscriptForSummary();
+            if (!transcriptOverride) {
+                showToast(t('alert_need_transcript_summary'));
+                return;
+            }
+            summaryViewMode = 'all';
+            resetSummaryCacheForTranscript(transcriptOverride);
+            activeSingleSummaryMode = null;
+            if (summaryCache.full && summaryCache.key_points && summaryCache.action_items) {
+                renderAllSummariesFromCache();
+                return;
+            }
+            beginSummaryRequest(3);
             summaryCache = { full: null, key_points: null, action_items: null };
             renderAllSummarySkeleton();
-            socket.emit('request_summary', { mode: 'full' });
-            socket.emit('request_summary', { mode: 'key_points' });
-            socket.emit('request_summary', { mode: 'action_items' });
+            socket.emit('request_summary', { mode: 'all', transcript_override: transcriptOverride });
         }
 
         function showSummary(mode, content) {
+            summaryCache[mode] = content;
+
             // 若正在「全部摘要」模式，更新對應區塊
             const allContainer = document.getElementById('summary-all');
-            if (allContainer) {
-                summaryCache[mode] = content;
+            if (summaryViewMode === 'all' && allContainer) {
                 renderSummaryBox(mode, content);
                 return;
             }
@@ -561,7 +1583,7 @@
         }
 
         function renderSummarySkeletonBlock(mode) {
-            const title = SUMMARY_TITLES[mode] || mode;
+            const title = summaryTitle(mode);
             return `
                 <div id="summary-box-${mode}">
                     <div class="border border-emerald-100 rounded-lg p-4 bg-white">
@@ -573,7 +1595,7 @@
         }
 
         function renderSummaryBox(mode, content) {
-            const title = SUMMARY_TITLES[mode] || mode;
+            const title = summaryTitle(mode);
             const box = document.getElementById(`summary-box-${mode}`);
             const html = `
                 <div class="border border-emerald-100 rounded-lg p-4 bg-white">
@@ -597,29 +1619,193 @@
         }
 
         // ── 匯出操作 ────────────────────────────────────
+        function hasCachedSummaryForMode(mode) {
+            if (mode === 'all') {
+                return Boolean(summaryCache.full && summaryCache.key_points && summaryCache.action_items);
+            }
+            return Boolean(summaryCache[mode]);
+        }
 
         function exportMeeting() {
             const meetingName = document.getElementById('meeting-name').value.trim();
-            socket.emit('export_meeting', { meeting_name: meetingName });
+            const transcriptText = getTranscriptForSummary();
+            if (!transcriptText) {
+                showToast(t('alert_need_transcript_export'));
+                return;
+            }
+            socket.emit('export_meeting', {
+                meeting_name: meetingName,
+                transcript_override: transcriptText,
+            });
         }
 
-        function exportSummary() {
+        function exportSummary(modeOverride) {
             const meetingName = document.getElementById('meeting-name').value.trim();
-            const mode = document.getElementById('summary-export-mode').value;
-            socket.emit('export_summary', { meeting_name: meetingName, mode: mode });
+            const mode = modeOverride || (document.getElementById('summary-export-mode')?.value || 'full');
+            const transcriptText = getTranscriptForSummary();
+            if (!transcriptText) {
+                showToast(t('alert_need_transcript_summary'));
+                return;
+            }
+            if (!hasCachedSummaryForMode(mode)) {
+                showToast(t('alert_need_summary_export'));
+                return;
+            }
+            socket.emit('export_summary', {
+                meeting_name: meetingName,
+                mode: mode,
+                transcript_override: transcriptText,
+            });
         }
 
-        function downloadBlob(filename, content) {
-            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+        function enhanceTranscript() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
+            if (!hasEnhancedTranscript) {
+                transcriptBackupState = {
+                    raw: transcriptRawLines.slice(),
+                    proofread: transcriptProofreadLines.slice(),
+                };
+            }
+            hasEnhancedTranscript = true;
+            setEnhanceUndoVisible(true);
+            showToast(t('enhance_started'));
+            socket.emit('enhance_transcript');
         }
+
+        function undoEnhance() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
+            if (!transcriptBackupState) return;
+            transcriptRawLines = transcriptBackupState.raw.slice();
+            transcriptProofreadLines = transcriptBackupState.proofread.slice();
+            transcriptLineNodes = [];
+            transcriptDirtyIndices = new Set();
+            const maxLen = Math.max(transcriptRawLines.length, transcriptProofreadLines.length);
+            for (let i = 0; i < maxLen; i++) {
+                transcriptDirtyIndices.add(i);
+            }
+            const linesRoot = document.getElementById('transcript-lines');
+            if (linesRoot) {
+                linesRoot.innerHTML = '';
+            }
+            renderTranscriptFromLines();
+            hasEnhancedTranscript = false;
+            transcriptBackupState = null;
+            setEnhanceUndoVisible(false);
+        }
+
+        let toastTimer = null;
+        function showToast(message) {
+            const el = document.getElementById('toast');
+            if (!el) return;
+            el.textContent = message;
+            el.classList.add('show');
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => {
+                el.classList.remove('show');
+            }, 2200);
+        }
+
+        function toggleContact() {
+            const modal = document.getElementById('contact-modal');
+            if (!modal) return;
+            modal.classList.toggle('hidden');
+            modal.classList.toggle('flex');
+            lucide.createIcons();
+        }
+
+        function toggleGuide() {
+            const modal = document.getElementById('guide-modal');
+            if (!modal) return;
+            modal.classList.toggle('hidden');
+            modal.classList.toggle('flex');
+            lucide.createIcons();
+        }
+
+        function updateStoragePathDisplay(path) {
+            latestStoragePath = path || '';
+            const el = document.getElementById('storage-path-text');
+            if (el) {
+                el.textContent = latestStoragePath;
+            }
+        }
+
+        function refreshStoragePath() {
+            const meetingName = document.getElementById('meeting-name')?.value?.trim() || '';
+            socket.emit('get_storage_path', { meeting_name: meetingName });
+        }
+
+        function openStorageFolder() {
+            const meetingName = document.getElementById('meeting-name')?.value?.trim() || '';
+            socket.emit('open_storage_folder', { meeting_name: meetingName });
+        }
+
+        const modelSelectEl = document.getElementById('stt-model-select');
+        if (modelSelectEl) {
+            modelSelectEl.addEventListener('change', () => {
+                const selectedKey = modelSelectEl.value;
+                if (currentState !== 'idle') {
+                    alert(t('alert_switch_model_blocked'));
+                    modelSelectEl.value = sttModelKey || selectedKey;
+                    return;
+                }
+                if (selectedKey && selectedKey !== sttModelKey) {
+                    socket.emit('set_stt_model', { model_key: selectedKey });
+                }
+            });
+        }
+
+        const langModeEl = document.getElementById('lang-mode-select');
+        if (langModeEl) {
+            langModeEl.addEventListener('change', () => {
+                const selected = langModeEl.value;
+                if (currentState !== 'idle') {
+                    alert(t('alert_switch_language_blocked'));
+                    langModeEl.value = currentLangMode || selected;
+                    return;
+                }
+                if (selected && selected !== currentLangMode) {
+                    currentLangMode = selected;
+                    socket.emit('set_language_mode', { language_mode: selected });
+                }
+            });
+        }
+
+        const summaryExportEl = document.getElementById('summary-export-mode');
+        if (summaryExportEl) {
+            summaryExportEl.addEventListener('change', () => {
+                exportSummary(summaryExportEl.value);
+            });
+        }
+
+        const langSelectEl = document.getElementById('lang-select');
+        if (langSelectEl) {
+            langSelectEl.addEventListener('change', () => {
+                currentLang = langSelectEl.value;
+                applyI18n();
+                updateUI();
+            });
+        }
+
+        const meetingNameEl = document.getElementById('meeting-name');
+        if (meetingNameEl) {
+            meetingNameEl.addEventListener('input', refreshStoragePath);
+            meetingNameEl.addEventListener('change', refreshStoragePath);
+        }
+
+        window.addEventListener('load', () => {
+            initMic();
+            refreshStoragePath();
+        });
+
+        applyI18n();
     </script>
 </body>
 </html>

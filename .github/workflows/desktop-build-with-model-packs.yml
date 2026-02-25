@@ -1,0 +1,262 @@
+name: Build Desktop Installers + Model Packs
+
+on:
+  workflow_dispatch:
+    inputs:
+      gguf_url:
+        description: "Direct download URL for GGUF model (.gguf)"
+        required: true
+      sherpa_zip_url:
+        description: "Direct download URL for sherpa-onnx model zip"
+        required: true
+
+jobs:
+  build-macos:
+    name: Build macOS DMG + model pack zip (arm64)
+    runs-on: macos-14
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      EMBED_SHERPA_ONNX: "0"
+      PYINSTALLER_MODE: "onedir"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python deps
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+          python3 -m pip install pyinstaller gdown
+
+      - name: Download model assets
+        run: |
+          mkdir -p models/llm models/sherpa-onnx
+          GGUF_FILENAME=$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          cfg = json.loads(Path("desktop/model_pack_config.json").read_text(encoding="utf-8"))
+          print(cfg["ggufFilename"])
+          PY
+          )
+          python3 -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models/llm/${GGUF_FILENAME}"
+          python3 -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models/sherpa-onnx.zip
+          unzip -oq models/sherpa-onnx.zip -d models/sherpa-onnx
+          python3 - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          cfg = json.loads(Path("desktop/model_pack_config.json").read_text(encoding="utf-8"))
+          root = Path("models/sherpa-onnx")
+          expected = root / cfg["sherpaModelDirName"]
+          if expected.is_dir():
+              print(f"Sherpa layout OK: {expected}")
+              raise SystemExit(0)
+
+          matches = [
+              p for p in root.rglob(cfg["sherpaModelDirName"])
+              if p.is_dir() and "__MACOSX" not in p.parts
+          ]
+          if len(matches) == 1:
+              src = matches[0]
+              expected.parent.mkdir(parents=True, exist_ok=True)
+              if expected.exists():
+                  shutil.rmtree(expected)
+              shutil.move(str(src), str(expected))
+              print(f"Normalized Sherpa dir: {src} -> {expected}")
+          else:
+              print("Could not uniquely locate expected Sherpa model dir.")
+              print("Top-level entries under models/sherpa-onnx:")
+              for p in sorted(root.iterdir()):
+                  print(f" - {p.name}")
+          PY
+
+      - name: Validate downloaded model structure
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          cfg = json.loads(Path("desktop/model_pack_config.json").read_text(encoding="utf-8"))
+          gguf = Path("models/llm") / cfg["ggufFilename"]
+          sherpa_dir = Path("models/sherpa-onnx") / cfg["sherpaModelDirName"]
+          if not gguf.is_file():
+              raise SystemExit(f"missing gguf: {gguf}")
+          if not sherpa_dir.is_dir():
+              raise SystemExit(f"missing sherpa dir: {sherpa_dir}")
+          print(f"GGUF OK: {gguf}")
+          print(f"Sherpa dir OK: {sherpa_dir}")
+          PY
+
+      - name: Build backend (PyInstaller)
+        run: |
+          python3 scripts/build_backend.py
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build macOS DMG (main app only)
+        working-directory: desktop
+        run: npm run build:mac
+
+      - name: Build macOS model pack zip
+        run: |
+          python3 - <<'PY'
+          import json
+          import shutil
+          import zipfile
+          from pathlib import Path
+
+          root = Path(".").resolve()
+          cfg = json.loads((root / "desktop" / "model_pack_config.json").read_text(encoding="utf-8"))
+          version = cfg["versionLabel"]
+          out_dir = root / "desktop" / "dist-model-mac"
+          stage = out_dir / f"AI-Meeting-Assistant-Model-Pack-{version}-macos"
+          zip_path = out_dir / f"AI-Meeting-Assistant-Model-Pack-{version}-macos.zip"
+
+          if stage.exists():
+              shutil.rmtree(stage)
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          (stage / "models" / "llm").mkdir(parents=True, exist_ok=True)
+          (stage / "models" / "sherpa-onnx").mkdir(parents=True, exist_ok=True)
+
+          shutil.copy2(root / "models" / "llm" / cfg["ggufFilename"], stage / "models" / "llm" / cfg["ggufFilename"])
+          shutil.copytree(root / "models" / "sherpa-onnx", stage / "models" / "sherpa-onnx", dirs_exist_ok=True)
+
+          if zip_path.exists():
+              zip_path.unlink()
+
+          with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+              for p in stage.rglob("*"):
+                  zf.write(p, p.relative_to(out_dir))
+
+          print(f"mac model pack -> {zip_path}")
+          PY
+
+      - name: Upload macOS main installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.dmg.blockmap
+          if-no-files-found: error
+
+      - name: Upload macOS model pack
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-model-pack
+          path: desktop/dist-model-mac/*.zip
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows EXE + model installer (x64)
+    runs-on: windows-latest
+    env:
+      EMBED_SHERPA_ONNX: "0"
+      PYINSTALLER_MODE: "onedir"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller gdown
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Download model assets
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path models\llm | Out-Null
+          New-Item -ItemType Directory -Force -Path models\sherpa-onnx | Out-Null
+
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $ggufFilename = $cfg.ggufFilename
+
+          python -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models\llm\$ggufFilename"
+          python -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models\sherpa-onnx.zip
+          Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
+
+          $expectedName = $cfg.sherpaModelDirName
+          $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
+          if (-not (Test-Path $expectedDir)) {
+            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
+              Where-Object { $_.Name -eq $expectedName -and $_.FullName -notmatch '[\\/]+__MACOSX([\\/]|$)' }
+            if ($matches.Count -eq 1) {
+              $src = $matches[0].FullName
+              Move-Item -Path $src -Destination $expectedDir -Force
+              Write-Host "Normalized Sherpa dir: $src -> $expectedDir"
+            } else {
+              Write-Host "Could not uniquely locate expected Sherpa model dir."
+              Write-Host "Top-level entries under models\\sherpa-onnx:"
+              Get-ChildItem -Path "models\sherpa-onnx" | ForEach-Object { Write-Host " - $($_.Name)" }
+            }
+          }
+
+      - name: Validate downloaded model structure
+        shell: pwsh
+        run: |
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $ggufPath = "models\llm\$($cfg.ggufFilename)"
+          $sherpaDir = "models\sherpa-onnx\$($cfg.sherpaModelDirName)"
+          if (-not (Test-Path $ggufPath)) { throw "Missing GGUF: $ggufPath" }
+          if (-not (Test-Path $sherpaDir)) { throw "Missing sherpa dir: $sherpaDir" }
+          Write-Host "GGUF OK: $ggufPath"
+          Write-Host "Sherpa dir OK: $sherpaDir"
+
+      - name: Build model installer (Windows)
+        run: |
+          python scripts\build_windows_model_installer.py
+
+      - name: Build backend (PyInstaller)
+        run: |
+          python scripts\build_backend.py
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Windows installer (main app only)
+        working-directory: desktop
+        run: npm run build:win
+
+      - name: Upload Windows main installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: |
+            desktop\dist\AI Meeting Assistant Setup *.exe
+            desktop\dist\AI Meeting Assistant Setup *.exe.blockmap
+          if-no-files-found: error
+
+      - name: Upload Windows model installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-model-installer
+          path: desktop\dist-model\*.exe
+          if-no-files-found: error

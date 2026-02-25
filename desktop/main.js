@@ -1,13 +1,193 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, shell } = require("electron");
 const path = require("path");
+const fs = require("fs");
 const { spawn } = require("child_process");
 const { ensureOllama, ensureModel } = require("./ollama");
 const http = require("http");
+const modelPackConfig = require("./model_pack_config.json");
 
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
+const SUMMARY_ENGINE = (process.env.SUMMARY_ENGINE || "llama_cpp").trim().toLowerCase();
+const DEFAULT_GGUF = modelPackConfig.ggufFilename;
+const SHERPA_MODEL_DIR_NAME = modelPackConfig.sherpaModelDirName;
+const MODEL_VERSION_LABEL = modelPackConfig.versionLabel;
+const MODEL_INSTALLER_FILENAME = modelPackConfig.installerFilename;
+const MODEL_PACK_DOWNLOAD_URL = "https://github.com/ee16389-alt/ai-meeting-assistant/releases";
+const BACKEND_BIN_NAME = process.platform === "win32" ? "ai_meeting_backend.exe" : "ai_meeting_backend";
 
 let backendProcess = null;
+
+function getManagedModelDir() {
+  if (process.platform === "win32") {
+    const localAppData = process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local");
+    return path.join(localAppData, "AI Meeting Assistant", "models", "llm");
+  }
+  return path.join(app.getPath("userData"), "models", "llm");
+}
+
+function getManagedSherpaRootDir() {
+  return path.join(getManagedModelDir(), "..", "sherpa-onnx");
+}
+
+function hasSherpaModelFiles(modelDir) {
+  if (!modelDir || !fs.existsSync(modelDir) || !fs.statSync(modelDir).isDirectory()) {
+    return false;
+  }
+  const names = new Set(fs.readdirSync(modelDir));
+  const hasEncoder = names.has("encoder-epoch-99-avg-1.int8.onnx") || names.has("encoder-epoch-99-avg-1.onnx");
+  const hasJoiner = names.has("joiner-epoch-99-avg-1.int8.onnx") || names.has("joiner-epoch-99-avg-1.onnx");
+  return hasEncoder && hasJoiner && names.has("decoder-epoch-99-avg-1.onnx") && names.has("tokens.txt");
+}
+
+function findSherpaDirInSelectedDirectory(selectedDir) {
+  const candidates = [
+    selectedDir,
+    path.join(selectedDir, SHERPA_MODEL_DIR_NAME),
+    path.join(selectedDir, "sherpa-onnx", SHERPA_MODEL_DIR_NAME),
+    path.join(selectedDir, "models", "sherpa-onnx", SHERPA_MODEL_DIR_NAME),
+  ];
+  for (const candidate of candidates) {
+    if (hasSherpaModelFiles(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+function findModelInSelectedDirectory(selectedDir) {
+  const direct = path.join(selectedDir, DEFAULT_GGUF);
+  if (fs.existsSync(direct)) {
+    return direct;
+  }
+  const llmSubdir = path.join(selectedDir, "models", "llm", DEFAULT_GGUF);
+  if (fs.existsSync(llmSubdir)) {
+    return llmSubdir;
+  }
+  return null;
+}
+
+function promptForModelPath(candidates) {
+  while (true) {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      buttons: ["選擇模型資料夾", "開啟模型包下載頁", "結束"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "缺少摘要模型",
+      message: "找不到內建摘要模型",
+      detail:
+        `支援模型版本：${MODEL_VERSION_LABEL}\n` +
+        `預期檔名：${DEFAULT_GGUF}\n` +
+        `建議安裝模型包：${MODEL_INSTALLER_FILENAME}\n\n` +
+        "已檢查路徑：\n" +
+        candidates.map((p) => `- ${p}`).join("\n"),
+    });
+
+    if (choice === 0) {
+      const picked = dialog.showOpenDialogSync({
+        title: "選擇模型資料夾（包含 GGUF 檔）",
+        properties: ["openDirectory"],
+      });
+      if (!picked || picked.length === 0) {
+        continue;
+      }
+      const found = findModelInSelectedDirectory(picked[0]);
+      if (found) {
+        return found;
+      }
+      dialog.showErrorBox(
+        "模型版本不符或檔名錯誤",
+        `在所選資料夾中找不到 ${DEFAULT_GGUF}。\n請安裝對應版本模型包（${MODEL_VERSION_LABEL}）。`
+      );
+      continue;
+    }
+
+    if (choice === 1) {
+      shell.openExternal(MODEL_PACK_DOWNLOAD_URL);
+      continue;
+    }
+
+    return null;
+  }
+}
+
+function promptForSherpaModelDir(candidates) {
+  while (true) {
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      buttons: ["選擇模型資料夾", "開啟模型包下載頁", "結束"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: "缺少語音辨識模型",
+      message: "找不到 Sherpa-ONNX 模型",
+      detail:
+        `支援模型版本：${MODEL_VERSION_LABEL}\n` +
+        `預期資料夾：${SHERPA_MODEL_DIR_NAME}\n` +
+        `建議安裝模型包：${MODEL_INSTALLER_FILENAME}\n\n` +
+        "已檢查路徑：\n" +
+        candidates.map((p) => `- ${p}`).join("\n"),
+    });
+
+    if (choice === 0) {
+      const picked = dialog.showOpenDialogSync({
+        title: "選擇 Sherpa-ONNX 模型資料夾",
+        properties: ["openDirectory"],
+      });
+      if (!picked || picked.length === 0) {
+        continue;
+      }
+      const found = findSherpaDirInSelectedDirectory(picked[0]);
+      if (found) {
+        return found;
+      }
+      dialog.showErrorBox(
+        "Sherpa-ONNX 模型不完整",
+        `在所選資料夾中找不到完整的 Sherpa-ONNX 模型檔。\n請安裝對應模型包（${MODEL_VERSION_LABEL}）。`
+      );
+      continue;
+    }
+
+    if (choice === 1) {
+      shell.openExternal(MODEL_PACK_DOWNLOAD_URL);
+      continue;
+    }
+
+    return null;
+  }
+}
+
+function resolveProductionModelPath() {
+  const envModelPath = (process.env.LLM_MODEL_PATH || "").trim();
+  const packagedModelPath = path.join(process.resourcesPath, "models", "llm", DEFAULT_GGUF);
+  const managedModelPath = path.join(getManagedModelDir(), DEFAULT_GGUF);
+  const candidates = [envModelPath, packagedModelPath, managedModelPath].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return promptForModelPath(candidates);
+}
+
+function resolveProductionSherpaModelDir() {
+  const envSherpaDir = (process.env.SHERPA_ONNX_MODEL_DIR || "").trim();
+  const packagedSherpaDir = path.join(process.resourcesPath, "models", "sherpa-onnx", SHERPA_MODEL_DIR_NAME);
+  const managedSherpaDir = path.join(getManagedSherpaRootDir(), SHERPA_MODEL_DIR_NAME);
+  const candidates = [envSherpaDir, packagedSherpaDir, managedSherpaDir].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (hasSherpaModelFiles(candidate)) {
+      return candidate;
+    }
+  }
+
+  return promptForSherpaModelDir(candidates);
+}
 
 function waitForServer(url, timeoutMs = 30000) {
   const start = Date.now();
@@ -36,21 +216,85 @@ function waitForServer(url, timeoutMs = 30000) {
 function startBackend() {
   const isProd = app.isPackaged;
   if (isProd) {
-    const backendPath = path.join(process.resourcesPath, "backend", "ai_meeting_backend");
-    backendProcess = spawn(backendPath, [], { stdio: "inherit" });
+    const backendPath = path.join(process.resourcesPath, "backend", BACKEND_BIN_NAME);
+    if (!fs.existsSync(backendPath)) {
+      dialog.showErrorBox(
+        "安裝包缺少後端",
+        `找不到後端執行檔：${backendPath}\n請重新打包，並確認 desktop/backend/ai_meeting_backend 存在。`
+      );
+      app.quit();
+      return;
+    }
+    const modelPath = resolveProductionModelPath();
+    if (!modelPath || !fs.existsSync(modelPath)) {
+      if (!modelPath) {
+        app.quit();
+        return;
+      }
+      dialog.showErrorBox("安裝包缺少摘要模型", `找不到 GGUF 模型檔：${modelPath}`);
+      app.quit();
+      return;
+    }
+    const sherpaModelDir = resolveProductionSherpaModelDir();
+    if (!sherpaModelDir || !hasSherpaModelFiles(sherpaModelDir)) {
+      if (!sherpaModelDir) {
+        app.quit();
+        return;
+      }
+      dialog.showErrorBox("安裝包缺少語音辨識模型", `找不到完整 Sherpa-ONNX 模型：${sherpaModelDir}`);
+      app.quit();
+      return;
+    }
+    backendProcess = spawn(backendPath, [], {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        COGNITION_BACKEND: SUMMARY_ENGINE === "ollama" ? "ollama" : "llama_cpp",
+        LLM_MODEL_PATH: modelPath,
+        SHERPA_ONNX_MODEL_DIR: sherpaModelDir,
+        STT_LAZY_INIT: process.env.STT_LAZY_INIT || "1",
+        SHERPA_ONNX_THREADS: process.env.SHERPA_ONNX_THREADS || "2",
+        SHERPA_ONNX_WARMUP_SECONDS: process.env.SHERPA_ONNX_WARMUP_SECONDS || "0",
+        LLAMA_THREADS: process.env.LLAMA_THREADS || "2",
+      },
+    });
   } else {
     // Dev: use system python to run app.py
     const projectRoot = path.resolve(__dirname, "..");
     backendProcess = spawn("python3", ["app.py"], {
       cwd: projectRoot,
-      env: { ...process.env, PORT: String(BACKEND_PORT) },
+      env: {
+        ...process.env,
+        PORT: String(BACKEND_PORT),
+        COGNITION_BACKEND: SUMMARY_ENGINE === "ollama" ? "ollama" : "llama_cpp",
+      },
       stdio: "inherit",
     });
   }
 }
 
 async function createWindow() {
-  await ensureOllama();
+  if (SUMMARY_ENGINE !== "ollama") {
+    startBackend();
+    try {
+      await waitForServer(BACKEND_URL);
+    } catch (e) {
+      dialog.showErrorBox("後端啟動失敗", "無法連線到後端服務，請稍後再試。");
+    }
+
+    const win = new BrowserWindow({
+      width: 1280,
+      height: 800,
+      backgroundColor: "#ffffff",
+      webPreferences: {
+        contextIsolation: true,
+      },
+    });
+    await win.loadURL(BACKEND_URL);
+    return;
+  }
+
+  const ollamaReady = await ensureOllama();
   const progressWin = new BrowserWindow({
     width: 520,
     height: 220,
@@ -94,17 +338,25 @@ async function createWindow() {
   progressWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(progressHtml));
   progressWin.once("ready-to-show", () => progressWin.show());
 
-  const modelOk = await ensureModel((text) => {
-    const match = text.match(/(\\d+)%/);
-    const percent = match ? parseInt(match[1], 10) : null;
-    progressWin.webContents.send("progress", { percent, text });
-    if (percent !== null) {
-      progressWin.setProgressBar(percent / 100);
-    }
-  });
+  let modelOk = false;
+  if (ollamaReady) {
+    modelOk = await ensureModel((text) => {
+      const match = text.match(/(\\d+)%/);
+      const percent = match ? parseInt(match[1], 10) : null;
+      progressWin.webContents.send("progress", { percent, text });
+      if (percent !== null) {
+        progressWin.setProgressBar(percent / 100);
+      }
+    });
+  } else {
+    progressWin.webContents.send("progress", {
+      percent: null,
+      text: "已略過 Ollama 安裝，將先啟動 App（摘要功能暫時不可用）",
+    });
+  }
   progressWin.setProgressBar(-1);
   progressWin.close();
-  if (!modelOk) {
+  if (ollamaReady && !modelOk) {
     dialog.showErrorBox("模型下載失敗", "無法下載語言模型，請稍後再試。");
   }
   startBackend();
