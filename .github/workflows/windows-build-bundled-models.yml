@@ -135,6 +135,6 @@ jobs:
         with:
           name: windows-exe-bundled-models
           path: |
-            desktop\dist\AI Meeting Assistant Setup *.exe
+            desktop\dist\*.exe
             desktop\dist\*.blockmap
           if-no-files-found: error
