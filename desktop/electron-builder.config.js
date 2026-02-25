@@ -1,3 +1,6 @@
+const fs = require("fs");
+const path = require("path");
+
 function isTrue(value) {
   const v = String(value || "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes";
@@ -40,6 +43,14 @@ if (bundleOllamaModels) {
   });
 }
 
+const vcRedistPath = path.join(__dirname, "prereqs", "vc_redist.x64.exe");
+if (fs.existsSync(vcRedistPath)) {
+  extraResources.push({
+    from: "prereqs/vc_redist.x64.exe",
+    to: "prereqs/vc_redist.x64.exe",
+  });
+}
+
 module.exports = {
   appId: "com.minashih.ai-meeting-assistant",
   productName: "AI Meeting Assistant",
@@ -58,5 +69,8 @@ module.exports = {
   },
   win: {
     target: ["nsis"],
+  },
+  nsis: {
+    include: "build/installer.nsh",
   },
 };
