@@ -23,7 +23,7 @@ class State(Enum):
 
 class STTEngine:
     SAMPLE_RATE = 16000
-    WARMUP_SECONDS = 0.25
+    WARMUP_SECONDS = float(os.getenv("SHERPA_ONNX_WARMUP_SECONDS", "0"))
 
     def __init__(self, model_size="zipformer-small-zh-en", engine="sherpa-onnx", model_id: str | None = None):
         self._lock = threading.Lock()
@@ -39,7 +39,9 @@ class STTEngine:
         self._sherpa_recognizer = None
         self._sherpa_stream = None
         self._sherpa_last_text = ""
-        self._load_model(model_size, engine, model_id=self._model_id)
+        self._lazy_init = os.getenv("STT_LAZY_INIT", "1").strip().lower() not in {"0", "false", "no"}
+        if not self._lazy_init:
+            self._load_model(model_size, engine, model_id=self._model_id)
 
     @property
     def state(self) -> str:
@@ -85,9 +87,21 @@ class STTEngine:
         return True
 
     def start(self) -> str:
+        needs_load = False
         with self._lock:
             if self._state != State.IDLE:
                 return self._state.value
+            needs_load = self._sherpa_recognizer is None
+
+        if needs_load:
+            try:
+                self._load_model(self.model_size, self.engine, model_id=self._model_id)
+            except Exception as e:
+                self._set_error(f"STT 模型載入失敗: {e}")
+                with self._lock:
+                    return self._state.value
+
+        with self._lock:
             if self._sherpa_recognizer is not None:
                 self._sherpa_stream = self._sherpa_recognizer.create_stream()
                 self._sherpa_last_text = ""
@@ -197,7 +211,7 @@ class STTEngine:
             ],
         )
 
-        num_threads = int(os.getenv("SHERPA_ONNX_THREADS", "4"))
+        num_threads = int(os.getenv("SHERPA_ONNX_THREADS", "2"))
         self._sherpa_recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
             tokens=tokens,
             encoder=encoder,
@@ -250,6 +264,15 @@ class STTEngine:
         if self._sherpa_recognizer is None or self._sherpa_stream is None:
             return {"final": [], "partial": ""}
         try:
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                return {"final": [], "partial": ""}
+            if len(chunk) < 2:
+                return {"final": [], "partial": ""}
+            if len(chunk) % 2 != 0:
+                # PCM16 must be aligned to 2 bytes; drop trailing partial byte.
+                chunk = chunk[:-1]
+                if not chunk:
+                    return {"final": [], "partial": ""}
             pcm16 = np.frombuffer(chunk, dtype=np.int16)
             if pcm16.size == 0:
                 return {"final": [], "partial": ""}

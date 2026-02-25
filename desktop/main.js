@@ -252,6 +252,10 @@ function startBackend() {
         COGNITION_BACKEND: SUMMARY_ENGINE === "ollama" ? "ollama" : "llama_cpp",
         LLM_MODEL_PATH: modelPath,
         SHERPA_ONNX_MODEL_DIR: sherpaModelDir,
+        STT_LAZY_INIT: process.env.STT_LAZY_INIT || "1",
+        SHERPA_ONNX_THREADS: process.env.SHERPA_ONNX_THREADS || "2",
+        SHERPA_ONNX_WARMUP_SECONDS: process.env.SHERPA_ONNX_WARMUP_SECONDS || "0",
+        LLAMA_THREADS: process.env.LLAMA_THREADS || "2",
       },
     });
   } else {

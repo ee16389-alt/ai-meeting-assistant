@@ -1,5 +1,7 @@
 """Flask + SocketIO 主伺服器 - 路由與事件處理"""
 
+import base64
+import binascii
 import os
 import time
 import threading
@@ -80,6 +82,45 @@ audio_queue: Queue[tuple[int, bytes]] = Queue(maxsize=200)
 audio_queue_dropped = 0
 current_session_id = 0
 audio_worker_started = False
+
+
+def _coerce_chunk_bytes(chunk) -> bytes:
+    """將 socket.io 傳入的音訊資料統一轉成 bytes（支援 binary / list / base64 str）。"""
+    if chunk is None:
+        return b""
+    if isinstance(chunk, bytes):
+        return chunk
+    if isinstance(chunk, bytearray):
+        return bytes(chunk)
+    if isinstance(chunk, memoryview):
+        return chunk.tobytes()
+    if isinstance(chunk, list):
+        try:
+            return bytes(chunk)
+        except Exception:
+            return b""
+    if isinstance(chunk, str):
+        text = chunk.strip()
+        if not text:
+            return b""
+        if text.startswith("data:") and "base64," in text:
+            text = text.split("base64,", 1)[1]
+        # engine.io may encode binary payloads as "b<base64>" on polling transports.
+        if text.startswith("b") and len(text) > 1:
+            try:
+                return base64.b64decode(text[1:], validate=True)
+            except (binascii.Error, ValueError):
+                pass
+        try:
+            return base64.b64decode(text, validate=True)
+        except (binascii.Error, ValueError):
+            pass
+        # 最後退回直接編碼，避免因 transport 差異導致整段音訊被丟棄。
+        try:
+            return text.encode("latin1")
+        except Exception:
+            return text.encode("utf-8", errors="ignore")
+    return b""
 
 DEFAULT_SHERPA_ONNX_MODEL_DIR = os.path.join(
     os.path.dirname(__file__),
@@ -313,11 +354,14 @@ def handle_start(data=None):
         stt.set_language_mode(language_mode)
         current_lang_mode = language_mode
     state = stt.start()
+    stt_err = stt.get_and_clear_error()
     emit("state_changed", {
         "state": state,
         "opencc_available": _opencc_available(),
         "traditional_enabled": traditional_enabled,
     })
+    if stt_err:
+        emit("error", {"message": stt_err})
     _emit_opencc_status()
 
 
@@ -329,11 +373,7 @@ def handle_audio_chunk(data):
         chunk = data.get("chunk", b"")
     else:
         chunk = data
-    if isinstance(chunk, list):
-        try:
-            chunk = bytes(chunk)
-        except Exception:
-            chunk = b""
+    chunk = _coerce_chunk_bytes(chunk)
     try:
         size = len(chunk) if chunk is not None else 0
     except Exception:
@@ -364,11 +404,7 @@ def handle_audio_record_chunk(data):
         chunk = data.get("chunk", b"")
     else:
         chunk = data
-    if isinstance(chunk, list):
-        try:
-            chunk = bytes(chunk)
-        except Exception:
-            chunk = b""
+    chunk = _coerce_chunk_bytes(chunk)
     if not chunk:
         return
     try:
@@ -676,19 +712,12 @@ def _generate_summary(mode: str, full_text: str):
         if _is_model_error(summary_actions):
             socketio.emit("error", {"message": summary_actions})
             return
-        content_lines = []
-        content_lines.append("【全文摘要】")
-        content_lines.append(summary_full)
-        content_lines.append("")
-        content_lines.append("【重點條列】")
-        content_lines.append(summary_key)
-        content_lines.append("")
-        content_lines.append("【待辦清單】")
-        content_lines.append(summary_actions)
-        content_lines.append("")
-        content_lines.append("【逐字稿】")
-        content_lines.append(full_text)
-        content = "\n".join(content_lines)
+        # Frontend "全部摘要" view expects per-mode updates. Emit them in one
+        # backend task to avoid concurrent model calls from 3 separate requests.
+        socketio.emit("summary_result", {"mode": "full", "content": summary_full})
+        socketio.emit("summary_result", {"mode": "key_points", "content": summary_key})
+        socketio.emit("summary_result", {"mode": "action_items", "content": summary_actions})
+        return
     else:
         content = summarize_full(summary_input)
 

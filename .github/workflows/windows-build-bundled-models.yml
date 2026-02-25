@@ -1,0 +1,109 @@
+name: Build Windows Installer (Bundled Models)
+
+on:
+  workflow_dispatch:
+    inputs:
+      gguf_url:
+        description: "Direct download URL for GGUF model (.gguf)"
+        required: true
+      sherpa_zip_url:
+        description: "Direct download URL for sherpa-onnx model zip"
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      EMBED_SHERPA_ONNX: "0"
+      PYINSTALLER_MODE: "onedir"
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      BUNDLE_GGUF: "1"
+      BUNDLE_SHERPA_MODELS: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python deps
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pyinstaller gdown
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Download model assets (GGUF + Sherpa)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path models\llm | Out-Null
+          New-Item -ItemType Directory -Force -Path models\sherpa-onnx | Out-Null
+
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $ggufFilename = $cfg.ggufFilename
+
+          python -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models\llm\$ggufFilename"
+          python -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models\sherpa-onnx.zip
+          Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
+
+          $expectedName = $cfg.sherpaModelDirName
+          $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
+          if (-not (Test-Path $expectedDir)) {
+            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
+              Where-Object { $_.Name -eq $expectedName -and $_.FullName -notmatch '[\\/]+__MACOSX([\\/]|$)' }
+            if ($matches.Count -eq 1) {
+              $src = $matches[0].FullName
+              Move-Item -Path $src -Destination $expectedDir -Force
+              Write-Host "Normalized Sherpa dir: $src -> $expectedDir"
+            } else {
+              throw "Could not uniquely locate expected Sherpa model dir: $expectedName"
+            }
+          }
+
+      - name: Validate downloaded model structure
+        shell: pwsh
+        run: |
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $ggufPath = "models\llm\$($cfg.ggufFilename)"
+          $sherpaDir = "models\sherpa-onnx\$($cfg.sherpaModelDirName)"
+          if (-not (Test-Path $ggufPath)) { throw "Missing GGUF: $ggufPath" }
+          if (-not (Test-Path $sherpaDir)) { throw "Missing sherpa dir: $sherpaDir" }
+          Write-Host "GGUF OK: $ggufPath"
+          Write-Host "Sherpa dir OK: $sherpaDir"
+
+      - name: Prepare desktop assets (copy models into desktop/)
+        run: |
+          python scripts\prepare_desktop_assets.py --include-sherpa
+
+      - name: Build backend (PyInstaller)
+        run: |
+          python scripts\build_backend.py
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build Windows installer (bundled GGUF + Sherpa)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          npm run build:win:bundle-full
+
+      - name: Upload Windows bundled installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe-bundled-models
+          path: |
+            desktop\dist\AI Meeting Assistant Setup *.exe
+            desktop\dist\*.blockmap
+          if-no-files-found: error

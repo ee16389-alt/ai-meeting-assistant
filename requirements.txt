@@ -7,4 +7,4 @@ audioop-lts; python_version >= "3.13"
 opencc-python-reimplemented
 sherpa-onnx
 sherpa-onnx-bin
-llama-cpp-python
+llama-cpp-python==0.2.89

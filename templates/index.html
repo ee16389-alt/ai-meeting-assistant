@@ -415,6 +415,7 @@
         let mediaRecorder = null;
         let audioStream = null;
         let audioContext = null;
+        let audioSourceNode = null;
         let processor = null;
         let micReady = false;
         let micInitError = null;
@@ -429,7 +430,6 @@
         let connectionState = 'connecting';
         let transcriptBackupState = null;
         let hasEnhancedTranscript = false;
-        let summaryExportArmed = false;
         let isTranscriptEditing = false;
         let transcriptRawLines = [];
         let transcriptProofreadLines = [];
@@ -437,6 +437,9 @@
         let transcriptRenderTimer = null;
         let transcriptDirtyIndices = new Set();
         let latestStoragePath = '';
+        let lastMeetingNameUsed = '';
+        let transcriptOpsLockedBySummary = false;
+        let summaryRequestInFlight = 0;
 
         const I18N = {
             zh: {
@@ -497,6 +500,8 @@
                 storage_path_label: '目前存放位置：',
                 open_storage_folder: '開啟存放資料夾',
                 alert_need_meeting_name: '請先輸入會議名稱，再開始錄音。',
+                alert_transcript_locked_after_summary: '已選擇摘要後，請重新開始錄音才可編輯／校對／復原逐字稿。',
+                alert_need_new_meeting_name: '請輸入新的會議名稱（不可與上一場相同）。',
                 alert_need_transcript_summary: '目前沒有逐字稿內容，請先完成錄音或輸入文字後再產生摘要。',
                 alert_need_transcript_export: '目前沒有逐字稿內容，無法匯出逐字稿。',
                 alert_need_summary_export: '尚未產生對應摘要內容，請先點選摘要分頁產生後再匯出。',
@@ -565,6 +570,8 @@
                 storage_path_label: 'Storage path:',
                 open_storage_folder: 'Open folder',
                 alert_need_meeting_name: 'Please enter a meeting name before recording.',
+                alert_transcript_locked_after_summary: 'After selecting summary, restart recording before editing/cleanup/undo transcript.',
+                alert_need_new_meeting_name: 'Please enter a new meeting name (cannot be the same as the previous one).',
                 alert_need_transcript_summary: 'No transcript text yet. Record or enter transcript content before generating summaries.',
                 alert_need_transcript_export: 'No transcript text yet. Cannot export transcript.',
                 alert_need_summary_export: 'No matching summary content yet. Generate the selected summary first.',
@@ -685,6 +692,11 @@
         });
 
         socket.on('summary_result', (data) => {
+            endSummaryRequest();
+            summaryCache[data.mode] = data.content;
+            if (summaryViewMode === 'single' && activeSingleSummaryMode && data.mode !== activeSingleSummaryMode) {
+                return;
+            }
             showSummary(data.mode, data.content);
         });
 
@@ -723,6 +735,10 @@
         });
 
         socket.on('error', (data) => {
+            if (summaryRequestInFlight > 0) {
+                summaryRequestInFlight = 0;
+                setTranscriptOpsLocked(false);
+            }
             alert(data.message);
         });
 
@@ -749,6 +765,12 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
+                return;
+            }
+            if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
+                alert(t('alert_need_new_meeting_name'));
+                meetingInput.focus();
+                meetingInput.select();
                 return;
             }
 
@@ -795,7 +817,7 @@
             lucide.createIcons();
 
             try {
-                if (!micReady) {
+                if (!micReady || !processor || !audioContext) {
                     await initMic();
                 }
                 if (micInitError) {
@@ -849,6 +871,9 @@
                 setEnhanceUndoVisible(false);
                 isTranscriptEditing = false;
                 summaryCache = { full: null, key_points: null, action_items: null };
+                summaryCacheSourceText = '';
+                summaryViewMode = 'single';
+                clearSummaryLocksForNewRecording();
                 // 重置摘要區域
                 document.getElementById('summary-container').innerHTML = `
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-300 text-center p-10">
@@ -885,6 +910,8 @@
         }
 
         function stopRecording() {
+            const meetingInput = document.getElementById('meeting-name');
+            const previousMeetingName = meetingInput.value.trim();
             isRecording = false;
             if (processor) {
                 processor.disconnect();
@@ -897,36 +924,59 @@
                 audioContext.suspend();
             }
             socket.emit('stop_recording');
-            const meetingInput = document.getElementById('meeting-name');
+            if (previousMeetingName) {
+                lastMeetingNameUsed = previousMeetingName;
+            }
+            meetingInput.value = '';
             meetingInput.disabled = false;
+            refreshStoragePath();
+            meetingInput.focus();
         }
 
         async function initMic() {
             try {
-                if (audioContext && audioContext.state === 'suspended') {
-                    await audioContext.resume();
-                    micReady = true;
-                    micInitError = null;
-                    return;
+                if (audioContext && audioContext.state === 'closed') {
+                    audioContext = null;
+                    audioSourceNode = null;
+                    processor = null;
                 }
-                audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                audioContext = new AudioCtx({ sampleRate: 16000 });
-                const source = audioContext.createMediaStreamSource(audioStream);
-                processor = audioContext.createScriptProcessor(4096, 1, 1);
 
-                processor.onaudioprocess = (e) => {
-                    if (!isRecording) return;
-                    const input = e.inputBuffer.getChannelData(0);
-                    const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
-                    const pcm16 = floatTo16BitPCM(downsampled);
-                    socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
-                        // console.log('audio_chunk ack:', ack);
-                    });
-                };
+                if (!audioStream) {
+                    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                }
 
-                source.connect(processor);
-                processor.connect(audioContext.destination);
+                if (!audioContext) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    audioContext = new AudioCtx({ sampleRate: 16000 });
+                    audioSourceNode = null;
+                    processor = null;
+                }
+
+                if (audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
+
+                if (!audioSourceNode) {
+                    audioSourceNode = audioContext.createMediaStreamSource(audioStream);
+                }
+
+                if (!processor) {
+                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                    processor.onaudioprocess = (e) => {
+                        if (!isRecording) return;
+                        const input = e.inputBuffer.getChannelData(0);
+                        const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
+                        const pcm16 = floatTo16BitPCM(downsampled);
+                        socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
+                            // console.log('audio_chunk ack:', ack);
+                        });
+                    };
+
+                    audioSourceNode.connect(processor);
+                    processor.connect(audioContext.destination);
+                }
+
                 micReady = true;
                 micInitError = null;
             } catch (err) {
@@ -936,6 +986,14 @@
         }
 
         window.addEventListener('beforeunload', () => {
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (audioSourceNode) {
+                audioSourceNode.disconnect();
+                audioSourceNode = null;
+            }
             if (audioContext) {
                 audioContext.close();
                 audioContext = null;
@@ -953,6 +1011,11 @@
             const stopBtn = document.getElementById('stop-btn');
             const modelSelect = document.getElementById('stt-model-select');
             const langSelect = document.getElementById('lang-mode-select');
+            const saveAudioCheckbox = document.getElementById('save-audio');
+            const editBtn = document.getElementById('edit-transcript-btn');
+            const editDoneBtn = document.getElementById('edit-done-btn');
+            const enhanceBtn = document.getElementById('enhance-btn');
+            const enhanceUndoBtn = document.getElementById('enhance-undo-btn');
 
             switch (currentState) {
                 case 'idle':
@@ -991,6 +1054,20 @@
                 langSelect.classList.toggle('opacity-60', currentState !== 'idle');
                 langSelect.classList.toggle('cursor-not-allowed', currentState !== 'idle');
             }
+            if (saveAudioCheckbox) {
+                const locked = currentState !== 'idle';
+                saveAudioCheckbox.disabled = locked;
+                saveAudioCheckbox.classList.toggle('opacity-60', locked);
+                saveAudioCheckbox.classList.toggle('cursor-not-allowed', locked);
+            }
+            const transcriptBusy = currentState !== 'idle';
+            [editBtn, editDoneBtn, enhanceBtn, enhanceUndoBtn].forEach((el) => {
+                if (!el || el.classList.contains('hidden')) return;
+                const locked = transcriptBusy || transcriptOpsLockedBySummary;
+                el.disabled = locked;
+                el.classList.toggle('opacity-50', locked);
+                el.classList.toggle('cursor-not-allowed', locked);
+            });
             lucide.createIcons();
         }
 
@@ -1126,10 +1203,48 @@
             } else {
                 undoBtn.classList.add('hidden');
             }
+            if (!undoBtn.classList.contains('hidden')) {
+                undoBtn.disabled = transcriptOpsLockedBySummary;
+                undoBtn.classList.toggle('opacity-50', transcriptOpsLockedBySummary);
+                undoBtn.classList.toggle('cursor-not-allowed', transcriptOpsLockedBySummary);
+            }
+        }
+
+        function setTranscriptOpsLocked(locked) {
+            transcriptOpsLockedBySummary = Boolean(locked);
+            ['edit-transcript-btn', 'edit-done-btn', 'enhance-btn', 'enhance-undo-btn'].forEach((id) => {
+                const btn = document.getElementById(id);
+                if (!btn || btn.classList.contains('hidden')) return;
+                btn.disabled = transcriptOpsLockedBySummary;
+                btn.classList.toggle('opacity-50', transcriptOpsLockedBySummary);
+                btn.classList.toggle('cursor-not-allowed', transcriptOpsLockedBySummary);
+            });
+        }
+
+        function beginSummaryRequest(count = 1) {
+            summaryRequestInFlight += Math.max(1, Number(count) || 1);
+            setTranscriptOpsLocked(true);
+        }
+
+        function endSummaryRequest() {
+            summaryRequestInFlight = Math.max(0, summaryRequestInFlight - 1);
+            setTranscriptOpsLocked(summaryRequestInFlight > 0);
+        }
+
+        function clearSummaryLocksForNewRecording() {
+            summaryRequestInFlight = 0;
+            setTranscriptOpsLocked(false);
+        }
+
+        function guardTranscriptOpsLocked() {
+            if (!transcriptOpsLockedBySummary) return false;
+            showToast('摘要產生中，請稍候再編輯逐字稿。');
+            return true;
         }
 
         function startEditTranscript() {
-            if (currentState === 'recording' || currentState === 'paused') {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
                 showToast(t('alert_edit_blocked'));
                 return;
             }
@@ -1148,6 +1263,11 @@
         }
 
         function finishEditTranscript() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
             const linesRoot = document.getElementById('transcript-lines');
             if (!linesRoot) return;
             const oldMax = Math.max(
@@ -1327,7 +1447,7 @@
                 const line = getMergedTranscriptLine(i);
                 if (line) merged.push(line);
             }
-            return merged.join(' ').trim();
+            return merged.join('\n').trim();
         }
 
         function requestSummary(mode) {
@@ -1336,16 +1456,26 @@
                 showToast(t('alert_need_transcript_summary'));
                 return;
             }
+            summaryViewMode = 'single';
+            resetSummaryCacheForTranscript(transcriptText);
+            activeSingleSummaryMode = mode;
+            applySummaryTabState(mode);
+            if (summaryCache[mode]) {
+                showSummary(mode, summaryCache[mode]);
+                return;
+            }
+            if (summaryRequestInFlight > 0) {
+                const loadingTitle = summaryTitle(mode);
+                document.getElementById('summary-container').innerHTML = `
+                    <div class="h-full flex flex-col items-center justify-center space-y-4">
+                        <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
+                        <p class="text-orange-600 font-medium animate-pulse">${tFormat('summary_loading_for', { title: loadingTitle })}</p>
+                    </div>
+                `;
+                return;
+            }
+            beginSummaryRequest(1);
             summaryCache[mode] = null;
-
-            // 更新 tab 樣式
-            document.querySelectorAll('.summary-tab').forEach(tab => {
-                if (tab.dataset.mode === mode) {
-                    tab.className = tab.className.replace('tab-inactive', 'tab-active');
-                } else {
-                    tab.className = tab.className.replace('tab-active', 'tab-inactive');
-                }
-            });
 
             // 顯示 loading
             const loadingTitle = summaryTitle(mode);
@@ -1374,18 +1504,52 @@
             key_points: null,
             action_items: null,
         };
+        let summaryCacheSourceText = '';
+        let summaryViewMode = 'single';
+        let activeSingleSummaryMode = 'full';
+
+        function resetSummaryCacheForTranscript(transcriptText) {
+            if (summaryCacheSourceText === transcriptText) return;
+            summaryCacheSourceText = transcriptText;
+            summaryCache = { full: null, key_points: null, action_items: null };
+            activeSingleSummaryMode = 'full';
+        }
+
+        function applySummaryTabState(mode) {
+            document.querySelectorAll('.summary-tab').forEach(tab => {
+                if (tab.dataset.mode === mode) {
+                    tab.className = tab.className.replace('tab-inactive', 'tab-active');
+                } else {
+                    tab.className = tab.className.replace('tab-active', 'tab-inactive');
+                }
+            });
+        }
+
+        function renderAllSummariesFromCache() {
+            renderAllSummarySkeleton();
+            if (summaryCache.full) showSummary('full', summaryCache.full);
+            if (summaryCache.key_points) showSummary('key_points', summaryCache.key_points);
+            if (summaryCache.action_items) showSummary('action_items', summaryCache.action_items);
+        }
 
         function requestAllSummaries() {
+            if (summaryRequestInFlight > 0) return;
             const transcriptOverride = getTranscriptForSummary();
             if (!transcriptOverride) {
                 showToast(t('alert_need_transcript_summary'));
                 return;
             }
+            summaryViewMode = 'all';
+            resetSummaryCacheForTranscript(transcriptOverride);
+            activeSingleSummaryMode = null;
+            if (summaryCache.full && summaryCache.key_points && summaryCache.action_items) {
+                renderAllSummariesFromCache();
+                return;
+            }
+            beginSummaryRequest(3);
             summaryCache = { full: null, key_points: null, action_items: null };
             renderAllSummarySkeleton();
-            socket.emit('request_summary', { mode: 'full', transcript_override: transcriptOverride });
-            socket.emit('request_summary', { mode: 'key_points', transcript_override: transcriptOverride });
-            socket.emit('request_summary', { mode: 'action_items', transcript_override: transcriptOverride });
+            socket.emit('request_summary', { mode: 'all', transcript_override: transcriptOverride });
         }
 
         function showSummary(mode, content) {
@@ -1393,7 +1557,7 @@
 
             // 若正在「全部摘要」模式，更新對應區塊
             const allContainer = document.getElementById('summary-all');
-            if (allContainer) {
+            if (summaryViewMode === 'all' && allContainer) {
                 renderSummaryBox(mode, content);
                 return;
             }
@@ -1495,6 +1659,11 @@
         }
 
         function enhanceTranscript() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
             if (!hasEnhancedTranscript) {
                 transcriptBackupState = {
                     raw: transcriptRawLines.slice(),
@@ -1508,6 +1677,11 @@
         }
 
         function undoEnhance() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
             if (!transcriptBackupState) return;
             transcriptRawLines = transcriptBackupState.raw.slice();
             transcriptProofreadLines = transcriptBackupState.proofread.slice();
@@ -1607,16 +1781,7 @@
         const summaryExportEl = document.getElementById('summary-export-mode');
         if (summaryExportEl) {
             summaryExportEl.addEventListener('change', () => {
-                // 第一步：使用者先選擇匯出模式，僅進入待下載狀態
-                summaryExportArmed = true;
-            });
-
-            summaryExportEl.addEventListener('mousedown', (e) => {
-                if (!summaryExportArmed) return;
-                // 第二步：再次點擊同一顆下拉，直接下載目前模式
-                e.preventDefault();
                 exportSummary(summaryExportEl.value);
-                summaryExportArmed = false;
             });
         }
 

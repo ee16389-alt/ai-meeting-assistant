@@ -4,6 +4,7 @@ function isTrue(value) {
 }
 
 const bundleGguf = isTrue(process.env.BUNDLE_GGUF);
+const bundleSherpaModels = isTrue(process.env.BUNDLE_SHERPA_MODELS);
 const bundleOllamaModels = isTrue(process.env.BUNDLE_OLLAMA_MODELS);
 
 const extraResources = [
@@ -19,6 +20,14 @@ if (bundleGguf) {
     from: "models/llm",
     to: "models/llm",
     filter: ["*.gguf"],
+  });
+}
+
+if (bundleSherpaModels) {
+  extraResources.push({
+    from: "models/sherpa-onnx",
+    to: "models/sherpa-onnx",
+    filter: ["**/*"],
   });
 }
 

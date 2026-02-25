@@ -23,6 +23,12 @@ You can optionally bundle model files into installer (see section below).
   2. Build:
      - `cd desktop && npm run build:mac:bundle-gguf`
 
+- To bundle GGUF + Sherpa-ONNX into DMG (recommended full offline package):
+  1. Prepare assets:
+     - `python scripts/prepare_desktop_assets.py --include-sherpa`
+  2. Build:
+     - `cd desktop && npm run build:mac:bundle-full`
+
 - To bundle everything (largest installer):
   - `cd desktop && npm run build:mac:bundle-all`
 
@@ -35,6 +41,9 @@ If bundled files are missing or invalid, it falls back to `ollama pull`.
 3. `npm run dev`
 
 ## Build .dmg (macOS)
+Fast path (full offline DMG with bundled GGUF + Sherpa-ONNX):
+- `./scripts/build_mac_dmg_full.sh`
+
 1. Build backend binary first:
    - From project root:
      - `python3 -m venv .venv-build`
@@ -57,3 +66,4 @@ If bundled files are missing or invalid, it falls back to `ollama pull`.
 - In production, it expects the backend binary in `resources/backend/ai_meeting_backend`.
 - First launch auto-installs/pulls Ollama models only when `SUMMARY_ENGINE=ollama`.
 - Default backend build is `onedir` + `EMBED_SHERPA_ONNX=0` to reduce installer size. Override with env vars if needed.
+- Production desktop launcher defaults to lower startup load (`STT_LAZY_INIT=1`, `SHERPA_ONNX_THREADS=2`, `SHERPA_ONNX_WARMUP_SECONDS=0`, `LLAMA_THREADS=2`) unless env vars are provided.

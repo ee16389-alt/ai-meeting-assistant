@@ -43,7 +43,20 @@ def main():
     cmd = [
         "pyinstaller",
         "--clean",
+        # Avoid PYZ archive zlib corruption issues seen with some native-heavy deps
+        # (e.g. sherpa-onnx) in the packaged runtime.
+        "--debug", "noarchive",
         "--name", "ai_meeting_backend",
+        # PyInstaller can miss parts of Flask/SocketIO in some environments.
+        # Collect them explicitly so the packaged backend can boot reliably.
+        "--collect-all", "flask",
+        "--collect-all", "flask_socketio",
+        "--collect-all", "socketio",
+        "--collect-all", "engineio",
+        # Local summary engine dependency (llama-cpp-python) includes binary artifacts.
+        "--collect-all", "llama_cpp",
+        # STT runtime packages also ship binaries/resources that PyInstaller may miss.
+        "--collect-all", "sherpa_onnx",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "socketio.async_drivers.threading",
     ]

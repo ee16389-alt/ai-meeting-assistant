@@ -36,6 +36,7 @@ _MODEL_LOCK = threading.Lock()
 _LLAMA_INSTANCE: Optional["Llama"] = None
 _LLAMA_INSTANCE_PATH = ""
 _LLAMA_LOCK = threading.Lock()
+_LLAMA_INFER_LOCK = threading.Lock()
 
 # ollama fallback（當 COGNITION_BACKEND=ollama 時）
 OLLAMA_URL = "http://localhost:11434/api/generate"
@@ -106,15 +107,18 @@ def _call_llama(system_prompt: str, user_prompt: str) -> str:
         "[請直接輸出最終結果，不要解釋]"
     )
     try:
-        out = llm(
-            prompt,
-            max_tokens=LLM_MAX_TOKENS,
-            temperature=TEMPERATURE,
-            top_p=0.8,
-            top_k=40,
-            repeat_penalty=1.15,
-            stop=["[使用者輸入]", "[系統規則]"],
-        )
+        # llama-cpp-python inference is not reliably thread-safe when multiple
+        # summary requests hit the same in-process model concurrently.
+        with _LLAMA_INFER_LOCK:
+            out = llm(
+                prompt,
+                max_tokens=LLM_MAX_TOKENS,
+                temperature=TEMPERATURE,
+                top_p=0.8,
+                top_k=40,
+                repeat_penalty=1.15,
+                stop=["[使用者輸入]", "[系統規則]"],
+            )
         text = (out.get("choices", [{}])[0].get("text", "") or "").strip()
         if not text:
             return "[錯誤] 本地模型回傳空結果"
@@ -296,15 +300,166 @@ def _compose_full_from_transcript(prepared: str) -> str:
     return " ".join(lines).strip()
 
 
+def _is_sparse_summary_input(prepared: str) -> bool:
+    lines = [x.strip() for x in (prepared or "").splitlines() if x.strip()]
+    if not lines:
+        return True
+    if len(lines) == 1 and len(lines[0]) < 80:
+        return True
+    total_chars = sum(len(x) for x in lines)
+    return (len(lines) <= 2 and total_chars < 140) or (len(lines) <= 3 and total_chars < 90)
+
+
+def _first_fact_line(prepared: str) -> str:
+    for raw in (prepared or "").splitlines():
+        line = raw.strip()
+        if line:
+            return line
+    return ""
+
+
+def _extractive_key_points(prepared: str) -> str:
+    lines = []
+    seen = set()
+    for raw in (prepared or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        key = re.sub(r"\s+", "", line)
+        if key in seen:
+            continue
+        seen.add(key)
+        lines.append(f"• {line}")
+        if len(lines) >= 5:
+            break
+    if not lines:
+        return "• 逐字稿內容不足，無法生成重點"
+    if len(lines) <= 2:
+        lines.append("• （資訊不足，僅供參考）")
+    return "\n".join(lines)
+
+
+def _extractive_action_items(prepared: str) -> str:
+    items = []
+    seen = set()
+    for raw in (prepared or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if "資訊不足" in line:
+            continue
+        key = re.sub(r"\s+", "", line)
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append(f"- [ ] 針對「{line}」補充背景與下一步（待確認）")
+        if len(items) >= 5:
+            break
+    if not items:
+        return "- [ ] 補充更多逐字稿內容後再整理待辦項目（待確認）"
+    return "\n".join(items)
+
+
+def _contains_hallucination_artifacts(text: str) -> bool:
+    s = (text or "").strip()
+    if not s:
+        return False
+    markers = (
+        "Human:",
+        "Assistant:",
+        "User:",
+        "System:",
+        "Human：",
+        "Assistant：",
+        "User：",
+        "System：",
+        "系統提示",
+        "請注意]",
+        "```",
+        "以下是詳細分析",
+        "根據提供的信息和系統規則",
+        "根據提供的資訊和系統規則",
+        "最終結果是",
+    )
+    if any(m in s for m in markers):
+        return True
+    return bool(re.search(r"\b(Human|Assistant|User|System)\s*[:：]", s))
+
+
+def _sanitize_summary_output(text: str, source: str) -> str:
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    # Remove markdown fences and obvious prompt leakage lines.
+    s = s.replace("```plaintext", "").replace("```", "").strip()
+    leaked_patterns = (
+        r"^\s*(Human|Assistant|User|System)\s*[:：].*$",
+        r"^\s*根據提供[的]?資訊和系統規則.*$",
+        r"^\s*以下是詳細分析.*$",
+        r"^\s*最終結果是[:：]?\s*$",
+    )
+    kept_lines: list[str] = []
+    for line in s.splitlines():
+        line = line.strip()
+        if not line:
+            if kept_lines and kept_lines[-1] != "":
+                kept_lines.append("")
+            continue
+        if any(re.match(p, line) for p in leaked_patterns):
+            continue
+        kept_lines.append(line)
+
+    # Collapse repeated paragraphs/lines.
+    deduped: list[str] = []
+    seen = set()
+    for line in kept_lines:
+        key = re.sub(r"\s+", "", line)
+        if line and key and key in seen:
+            continue
+        if line and key:
+            seen.add(key)
+        deduped.append(line)
+
+    s = "\n".join(deduped).strip()
+    s = re.sub(r"\n{3,}", "\n\n", s)
+
+    # If output is much longer than short source text, keep it conservative.
+    src_len = len((source or "").strip())
+    if src_len and src_len <= 220 and len(s) > max(220, src_len * 2):
+        lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
+        s = "\n".join(lines[:4]).strip()
+
+    return s
+
+
+def _tokenize_overlap_basis(text: str) -> list[str]:
+    return re.findall(r"[\u4e00-\u9fff]{1,6}|[A-Za-z0-9_]+", (text or ""))
+
+
+def _has_low_source_overlap(output: str, source: str) -> bool:
+    out_tokens = _tokenize_overlap_basis(output)
+    src_tokens = set(_tokenize_overlap_basis(source))
+    if not out_tokens or not src_tokens:
+        return False
+    # Ignore boilerplate tokens that often appear in prompts/fallbacks.
+    boilerplate = {"資訊不足", "僅供參考", "待確認", "摘要", "重點", "全文", "清單"}
+    scored = [t for t in out_tokens if t not in boilerplate]
+    if not scored:
+        return False
+    overlap = sum(1 for t in scored if t in src_tokens)
+    return overlap / max(1, len(scored)) < 0.35
+
+
 def summarize_full(text: str) -> str:
     prepared = _normalize_text_for_summary(text)
     if not prepared:
         return "逐字稿內容不足，無法生成摘要。"
-
-    key_points = summarize_key_points(prepared)
-    composed = _compose_full_from_key_points(key_points)
-    if composed:
-        return composed
+    if _is_sparse_summary_input(prepared):
+        first = _first_fact_line(prepared)
+        if first:
+            return f"可確認內容：{first}（資訊不足，僅供參考）"
+        return "逐字稿內容較少，暫無法形成完整摘要。"
 
     system_prompt = (
         "你是一位專業的會議記錄員。"
@@ -314,8 +469,15 @@ def summarize_full(text: str) -> str:
         "若資訊不足，仍要先輸出你能確定的內容，再加上一句「（資訊不足，僅供參考）」作結。"
     )
     result = _call_model(system_prompt, prepared)
-    cleaned = (result or "").strip()
+    cleaned = _sanitize_summary_output(result, prepared)
+    if _contains_hallucination_artifacts(cleaned) or _has_low_source_overlap(cleaned, prepared):
+        fallback = _compose_full_from_transcript(prepared)
+        return (fallback + "（資訊不足，僅供參考）") if fallback else "逐字稿內容較少，暫無法形成完整摘要。"
     if _is_weak_full_summary(cleaned) or _looks_repetitive(cleaned):
+        key_points = summarize_key_points(prepared)
+        composed = _compose_full_from_key_points(key_points)
+        if composed:
+            return composed
         fallback_prompt = (
             "你是一位會議紀錄員。"
             "請只根據逐字稿，輸出一段 2-4 句的抽取式摘要。"
@@ -324,6 +486,7 @@ def summarize_full(text: str) -> str:
             "若資訊不足，也要先輸出可確認內容，再加「（資訊不足，僅供參考）」。"
         )
         retry = _call_model(fallback_prompt, prepared).strip()
+        retry = _sanitize_summary_output(retry, prepared)
         if retry and not _is_weak_full_summary(retry) and not _looks_repetitive(retry):
             return retry
         composed_retry = _compose_full_from_key_points(key_points)
@@ -335,13 +498,18 @@ def summarize_full(text: str) -> str:
     if _is_only_insufficient(cleaned):
         fallback = _compose_full_from_transcript(prepared)
         return fallback or "已擷取逐字稿重點，但內容仍不足以產生完整摘要。"
-    return cleaned
+    return cleaned or _compose_full_from_transcript(prepared) or "已擷取逐字稿重點，但內容仍不足以產生完整摘要。"
 
 
 def summarize_key_points(text: str) -> str:
     prepared = _normalize_text_for_summary(text)
     if not prepared:
         return "• 逐字稿內容不足，無法生成重點"
+    if _is_sparse_summary_input(prepared):
+        first = _first_fact_line(prepared)
+        if not first:
+            return "• 逐字稿內容不足，無法生成重點"
+        return f"• {first}\n• （資訊不足，僅供參考）"
 
     system_prompt = (
         "你是一位專業的會議記錄員。"
@@ -350,11 +518,14 @@ def summarize_key_points(text: str) -> str:
         "以條列式呈現，每個重點用「•」開頭，列出 3-6 點。"
         "若內容不足，至少輸出 1-2 點可確認資訊，最後補一行「• （資訊不足，僅供參考）」。"
     )
-    result = _call_model(system_prompt, prepared).strip()
-    if _looks_repetitive(result) or _is_only_insufficient(result):
-        # 回退為穩定抽取結果。
-        dedup_lines = prepared.splitlines()[:5]
-        return "\n".join([f"• {line}" for line in dedup_lines if line])
+    result = _sanitize_summary_output(_call_model(system_prompt, prepared), prepared)
+    if (
+        _looks_repetitive(result)
+        or _is_only_insufficient(result)
+        or _contains_hallucination_artifacts(result)
+        or _has_low_source_overlap(result, prepared)
+    ):
+        return _extractive_key_points(prepared)
     return result
 
 
@@ -393,6 +564,11 @@ def extract_action_items(text: str) -> str:
     prepared = _normalize_text_for_summary(text)
     if not prepared:
         return "- [ ] 逐字稿內容不足，無法整理待辦"
+    if _is_sparse_summary_input(prepared):
+        first = _first_fact_line(prepared)
+        if first:
+            return f"- [ ] 針對「{first}」補充會議背景與具體需求（待確認）"
+        return "- [ ] 補充更多逐字稿內容後再整理待辦項目（待確認）"
 
     system_prompt = (
         "你是一位專業的會議記錄員。"
@@ -404,12 +580,16 @@ def extract_action_items(text: str) -> str:
         "每行只能是一個待辦項目，不要輸出其他說明文字。"
     )
     result = _call_model(system_prompt, prepared)
-    cleaned = (result or "").strip()
-    if not _is_weak_action_items(cleaned) and not _looks_repetitive(cleaned):
+    cleaned = _sanitize_summary_output(result, prepared)
+    if (
+        not _is_weak_action_items(cleaned)
+        and not _looks_repetitive(cleaned)
+        and not _contains_hallucination_artifacts(cleaned)
+        and not _has_low_source_overlap(cleaned, prepared)
+    ):
         return cleaned
 
-    key_points = summarize_key_points(prepared)
-    composed = _compose_actions_from_key_points(key_points)
+    composed = _extractive_action_items(prepared)
     if composed:
         return composed
 
