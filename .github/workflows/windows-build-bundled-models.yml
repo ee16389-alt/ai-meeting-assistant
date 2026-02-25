@@ -59,20 +59,20 @@ jobs:
             if ($isDrive) {
               python -m gdown --fuzzy "$Url" -O "$OutFile"
               if ($LASTEXITCODE -ne 0) {
-                throw "gdown failed for $Label. If this is a Google Drive file, set sharing to 'Anyone with the link (Viewer)' and use a direct URL."
+                throw "gdown failed for ${Label}. If this is a Google Drive file, set sharing to 'Anyone with the link (Viewer)' and use a direct URL."
               }
             } else {
               Invoke-WebRequest -Uri $Url -OutFile $OutFile
             }
 
             if (-not (Test-Path $OutFile)) {
-              throw "Download failed for $Label: file not found at $OutFile"
+              throw "Download failed for ${Label}: file not found at ${OutFile}"
             }
             $size = (Get-Item $OutFile).Length
             if ($size -le 0) {
-              throw "Download failed for $Label: file is empty ($OutFile)"
+              throw "Download failed for ${Label}: file is empty (${OutFile})"
             }
-            Write-Host "Downloaded $Label -> $OutFile ($size bytes)"
+            Write-Host "Downloaded ${Label} -> ${OutFile} (${size} bytes)"
           }
 
           New-Item -ItemType Directory -Force -Path models\llm | Out-Null
