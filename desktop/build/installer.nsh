@@ -1,7 +1,5 @@
 !include "LogicLib.nsh"
 
-Var VcRedistExitCode
-
 !macro customInstall
   ; Auto-install Microsoft VC++ Runtime if missing (required by native libs, e.g. llama-cpp)
   StrCpy $0 0
@@ -19,14 +17,14 @@ Var VcRedistExitCode
     IfFileExists "$INSTDIR\resources\prereqs\vc_redist.x64.exe" has_vcredist missing_vcredist
 has_vcredist:
     DetailPrint "Installing Microsoft Visual C++ Runtime (x64)..."
-    ExecWait '"$INSTDIR\resources\prereqs\vc_redist.x64.exe" /install /quiet /norestart' $VcRedistExitCode
-    ${If} $VcRedistExitCode = 0
-    ${OrIf} $VcRedistExitCode = 1638
-    ${OrIf} $VcRedistExitCode = 3010
-    ${OrIf} $VcRedistExitCode = 1641
-      DetailPrint "VC++ Runtime install result code: $VcRedistExitCode"
+    ExecWait '"$INSTDIR\resources\prereqs\vc_redist.x64.exe" /install /quiet /norestart' $2
+    ${If} $2 = 0
+    ${OrIf} $2 = 1638
+    ${OrIf} $2 = 3010
+    ${OrIf} $2 = 1641
+      DetailPrint "VC++ Runtime install result code: $2"
     ${Else}
-      MessageBox MB_ICONEXCLAMATION|MB_OK "Microsoft Visual C++ Runtime 安裝失敗 (code=$VcRedistExitCode)。程式可能無法啟動。"
+      MessageBox MB_ICONEXCLAMATION|MB_OK "Microsoft Visual C++ Runtime 安裝失敗 (code=$2)。程式可能無法啟動。"
     ${EndIf}
     Goto done_vcredist
 missing_vcredist:
