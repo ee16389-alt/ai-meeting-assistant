@@ -46,14 +46,43 @@ jobs:
       - name: Download model assets (GGUF + Sherpa)
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
+          function Download-Asset {
+            param(
+              [string]$Url,
+              [string]$OutFile,
+              [string]$Label
+            )
+
+            $isDrive = $Url -match 'drive\.google\.com'
+            if ($isDrive) {
+              python -m gdown --fuzzy "$Url" -O "$OutFile"
+              if ($LASTEXITCODE -ne 0) {
+                throw "gdown failed for $Label. If this is a Google Drive file, set sharing to 'Anyone with the link (Viewer)' and use a direct URL."
+              }
+            } else {
+              Invoke-WebRequest -Uri $Url -OutFile $OutFile
+            }
+
+            if (-not (Test-Path $OutFile)) {
+              throw "Download failed for $Label: file not found at $OutFile"
+            }
+            $size = (Get-Item $OutFile).Length
+            if ($size -le 0) {
+              throw "Download failed for $Label: file is empty ($OutFile)"
+            }
+            Write-Host "Downloaded $Label -> $OutFile ($size bytes)"
+          }
+
           New-Item -ItemType Directory -Force -Path models\llm | Out-Null
           New-Item -ItemType Directory -Force -Path models\sherpa-onnx | Out-Null
 
           $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
           $ggufFilename = $cfg.ggufFilename
 
-          python -m gdown --fuzzy "${{ inputs.gguf_url }}" -O "models\llm\$ggufFilename"
-          python -m gdown --fuzzy "${{ inputs.sherpa_zip_url }}" -O models\sherpa-onnx.zip
+          Download-Asset -Url "${{ inputs.gguf_url }}" -OutFile "models\llm\$ggufFilename" -Label "GGUF"
+          Download-Asset -Url "${{ inputs.sherpa_zip_url }}" -OutFile "models\sherpa-onnx.zip" -Label "Sherpa zip"
           Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
 
           $expectedName = $cfg.sherpaModelDirName
