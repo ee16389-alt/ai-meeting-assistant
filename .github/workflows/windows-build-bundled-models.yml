@@ -122,6 +122,22 @@ jobs:
         working-directory: desktop
         run: npm ci
 
+      - name: Download VC++ Runtime Redistributable (x64)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path desktop\prereqs | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
+            -OutFile "desktop\prereqs\vc_redist.x64.exe"
+          if (-not (Test-Path "desktop\prereqs\vc_redist.x64.exe")) {
+            throw "Failed to download vc_redist.x64.exe"
+          }
+          $size = (Get-Item "desktop\prereqs\vc_redist.x64.exe").Length
+          if ($size -le 0) {
+            throw "Downloaded vc_redist.x64.exe is empty"
+          }
+          Write-Host "VC++ runtime downloaded: $size bytes"
+
       - name: Build Windows installer (bundled GGUF + Sherpa)
         working-directory: desktop
         shell: pwsh
