@@ -2,26 +2,17 @@
 
 Var VcRedistExitCode
 
-Function _IsVcRedistInstalled
-  ; Returns 1 in $0 if installed, otherwise 0
+!macro customInstall
+  ; Auto-install Microsoft VC++ Runtime if missing (required by native libs, e.g. llama-cpp)
   StrCpy $0 0
   SetRegView 64
   ClearErrors
   ReadRegDWORD $1 HKLM "SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64" "Installed"
-  ${If} ${Errors}
-    StrCpy $0 0
-    Return
+  ${IfNot} ${Errors}
+    ${If} $1 = 1
+      StrCpy $0 1
+    ${EndIf}
   ${EndIf}
-  ${If} $1 = 1
-    StrCpy $0 1
-  ${Else}
-    StrCpy $0 0
-  ${EndIf}
-FunctionEnd
-
-!macro customInstall
-  ; Auto-install Microsoft VC++ Runtime if missing (required by native libs, e.g. llama-cpp)
-  Call _IsVcRedistInstalled
   ${If} $0 = 1
     DetailPrint "Microsoft Visual C++ Runtime already installed. Skipping."
   ${Else}
