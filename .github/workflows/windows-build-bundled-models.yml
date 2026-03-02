@@ -158,12 +158,40 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          $resources = Resolve-Path "desktop\dist\win-unpacked\resources"
           $backend = Resolve-Path "desktop\dist\win-unpacked\resources\backend\ai_meeting_backend.exe"
           if (-not (Test-Path $backend)) {
             throw "Bundled backend exe not found: $backend"
           }
 
-          $proc = Start-Process -FilePath $backend -PassThru -WindowStyle Hidden
+          $compatModels = Join-Path $resources "backend\_internal\models"
+          $modelsDir = Join-Path $resources "models"
+          if ((Test-Path $modelsDir) -and -not (Test-Path $compatModels)) {
+            New-Item -ItemType Directory -Force -Path (Split-Path $compatModels -Parent) | Out-Null
+            try {
+              New-Item -ItemType Junction -Path $compatModels -Target $modelsDir | Out-Null
+              Write-Host "Created models compatibility junction: $compatModels -> $modelsDir"
+            } catch {
+              Copy-Item -Path $modelsDir -Destination $compatModels -Recurse -Force
+              Write-Host "Copied models compatibility dir: $compatModels"
+            }
+          }
+
+          Write-Host "Bundled resources layout:"
+          Get-ChildItem -Path $resources -Depth 2 | Select-Object FullName
+
+          $stdoutLog = Join-Path $env:RUNNER_TEMP "backend-stdout.log"
+          $stderrLog = Join-Path $env:RUNNER_TEMP "backend-stderr.log"
+          if (Test-Path $stdoutLog) { Remove-Item $stdoutLog -Force }
+          if (Test-Path $stderrLog) { Remove-Item $stderrLog -Force }
+
+          $proc = Start-Process `
+            -FilePath $backend `
+            -WorkingDirectory (Split-Path $backend -Parent) `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $stdoutLog `
+            -RedirectStandardError $stderrLog
           try {
             $ready = $false
             for ($i = 0; $i -lt 60; $i++) {
@@ -177,6 +205,14 @@ jobs:
                 }
               } catch {
                 if ($proc.HasExited) {
+                  if (Test-Path $stdoutLog) {
+                    Write-Host "backend stdout:"
+                    Get-Content $stdoutLog
+                  }
+                  if (Test-Path $stderrLog) {
+                    Write-Host "backend stderr:"
+                    Get-Content $stderrLog
+                  }
                   throw "Bundled backend exited early with code $($proc.ExitCode)"
                 }
               }
@@ -184,7 +220,23 @@ jobs:
 
             if (-not $ready) {
               if ($proc.HasExited) {
+                if (Test-Path $stdoutLog) {
+                  Write-Host "backend stdout:"
+                  Get-Content $stdoutLog
+                }
+                if (Test-Path $stderrLog) {
+                  Write-Host "backend stderr:"
+                  Get-Content $stderrLog
+                }
                 throw "Bundled backend exited before becoming healthy. Exit code: $($proc.ExitCode)"
+              }
+              if (Test-Path $stdoutLog) {
+                Write-Host "backend stdout:"
+                Get-Content $stdoutLog
+              }
+              if (Test-Path $stderrLog) {
+                Write-Host "backend stderr:"
+                Get-Content $stderrLog
               }
               throw "Bundled backend did not become healthy within timeout."
             }
