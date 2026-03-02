@@ -1,7 +1,23 @@
 """Flask + SocketIO 主伺服器 - 路由與事件處理"""
 
 import os
+import sys
 import time
+
+
+def _configure_console_encoding() -> None:
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+        except Exception:
+            pass
+
+
+_configure_console_encoding()
+
 from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
