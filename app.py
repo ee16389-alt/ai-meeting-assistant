@@ -15,7 +15,12 @@ from cognition import (
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "meeting-assistant-secret"
-socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=10 * 1024 * 1024)
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    max_http_buffer_size=10 * 1024 * 1024,
+    async_mode="threading",
+)
 
 class _UnavailableSTT:
     """STT 初始化失敗時的保底物件，避免後端整體啟動失敗。"""

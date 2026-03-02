@@ -24,6 +24,8 @@ def main():
         "--onefile",
         "--name", "ai_meeting_backend",
         "--add-data", "templates:templates",
+        "--hidden-import", "engineio.async_drivers.threading",
+        "--hidden-import", "simple_websocket",
         "app.py",
     ])
 
