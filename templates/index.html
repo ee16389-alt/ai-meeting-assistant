@@ -1089,7 +1089,9 @@
                                 return;
                             }
                             if (ack.ok) {
-                                updateAckDiag(true, `最後大小 ${ack.size || 0} bytes`);
+                                const rms = typeof ack.audio_rms === 'number' ? ` RMS ${ack.audio_rms}` : '';
+                                const partial = ack.partial ? ` partial: ${ack.partial}` : `最後大小 ${ack.size || 0} bytes${rms}`;
+                                updateAckDiag(true, partial);
                             } else {
                                 updateAckDiag(false, ack.error || ack.reason || 'backend 拒絕音訊');
                             }

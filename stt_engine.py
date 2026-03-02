@@ -128,7 +128,7 @@ def _pick_model_file(model_dir: Path, prefix: str) -> Path:
 
 
 class STTEngine:
-    TRANSCRIBE_INTERVAL_MS = 1500
+    TRANSCRIBE_INTERVAL_MS = 800
     SAMPLE_RATE = 16000
 
     def __init__(self, model_size="small"):
@@ -147,6 +147,7 @@ class STTEngine:
         self._recognizer = self._create_recognizer()
         self._stream = self._recognizer.create_stream()
         self._last_partial_text = ""
+        self._last_audio_rms = 0.0
 
         print("[STT] sherpa-onnx 模型載入完成", flush=True)
 
@@ -154,6 +155,16 @@ class STTEngine:
     def state(self) -> str:
         with self._lock:
             return self._state.value
+
+    @property
+    def partial_text(self) -> str:
+        with self._lock:
+            return self._last_partial_text
+
+    @property
+    def last_audio_rms(self) -> float:
+        with self._lock:
+            return self._last_audio_rms
 
     def start(self) -> str:
         with self._lock:
@@ -165,6 +176,7 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._last_partial_text = ""
+            self._last_audio_rms = 0.0
             self._stream = self._recognizer.create_stream()
             self._state = State.RECORDING
             return self._state.value
@@ -201,6 +213,7 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._last_partial_text = ""
+            self._last_audio_rms = 0.0
             self._stream = self._recognizer.create_stream()
             self._state = State.IDLE
 
@@ -239,9 +252,9 @@ class STTEngine:
             provider="cpu",
             decoding_method="greedy_search",
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=1.2,
-            rule2_min_trailing_silence=0.8,
-            rule3_min_utterance_length=30.0,
+            rule1_min_trailing_silence=0.6,
+            rule2_min_trailing_silence=0.3,
+            rule3_min_utterance_length=8.0,
         )
 
     def _get_buffer_duration_ms(self) -> int:
@@ -255,6 +268,7 @@ class STTEngine:
             if pcm16.size == 0:
                 return
             pcm32 = pcm16.astype(np.float32) / 32768.0
+            self._last_audio_rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
             self._pcm_buffer = np.concatenate([self._pcm_buffer, pcm32])
         except Exception as e:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)

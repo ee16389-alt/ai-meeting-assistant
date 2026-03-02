@@ -174,6 +174,15 @@ def handle_audio_chunk(data):
     print(f"[STT] 收到音訊 chunk: {size} bytes (count={audio_chunk_count})", flush=True)
 
     segments = stt.feed_audio(chunk)
+    partial_text = getattr(stt, "partial_text", "").strip()
+    if partial_text:
+        emit("transcript_partial", {
+            "text": partial_text,
+            "timestamp": time.strftime("%H:%M:%S"),
+        })
+    else:
+        emit("transcript_partial_clear")
+
     for seg in segments:
         line = {
             "index": len(transcript_lines),
@@ -190,7 +199,13 @@ def handle_audio_chunk(data):
         socketio.start_background_task(
             _proofread_line, idx, original_text
         )
-    return {"ok": True, "size": size, "count": audio_chunk_count}
+    return {
+        "ok": True,
+        "size": size,
+        "count": audio_chunk_count,
+        "partial": partial_text,
+        "audio_rms": round(float(getattr(stt, "last_audio_rms", 0.0)), 5),
+    }
 
 
 @socketio.on("audio_record_chunk")
@@ -257,6 +272,7 @@ def handle_stop():
         return
     handle_audio_recording_done()
     state, final_segments = stt.stop()
+    socketio.emit("transcript_partial_clear")
     for seg in final_segments:
         line = {
             "index": len(transcript_lines),
