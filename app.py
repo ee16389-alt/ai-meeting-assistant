@@ -17,8 +17,44 @@ app = Flask(__name__)
 app.config["SECRET_KEY"] = "meeting-assistant-secret"
 socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=10 * 1024 * 1024)
 
-# 全域 STT 引擎實例
-stt = STTEngine(model_size="small")
+class _UnavailableSTT:
+    """STT 初始化失敗時的保底物件，避免後端整體啟動失敗。"""
+
+    def __init__(self, error: Exception):
+        self._error = str(error)
+
+    @property
+    def state(self) -> str:
+        return "error"
+
+    def start(self) -> str:
+        return "error"
+
+    def pause(self) -> str:
+        return "error"
+
+    def resume(self) -> str:
+        return "error"
+
+    def stop(self) -> tuple[str, list[dict]]:
+        return "error", []
+
+    def feed_audio(self, chunk: bytes) -> list[dict]:
+        return []
+
+    @property
+    def error(self) -> str:
+        return self._error
+
+
+# 全域 STT 引擎實例（初始化失敗時不讓整個 Flask 進程退出）
+_stt_init_error = ""
+try:
+    stt = STTEngine(model_size="small")
+except Exception as e:
+    _stt_init_error = str(e)
+    print(f"[STT] 初始化失敗，後端將以降級模式啟動: {_stt_init_error}", flush=True)
+    stt = _UnavailableSTT(e)
 
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
@@ -36,7 +72,11 @@ def index():
 
 @app.route("/health")
 def health():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "stt_ready": stt.state != "error",
+        "stt_error": _stt_init_error or None,
+    }
 
 
 # ── SocketIO 事件處理 ───────────────────────────────────
@@ -44,7 +84,10 @@ def health():
 @socketio.on("connect")
 def handle_connect():
     ollama_ok = check_health()
-    emit("state_changed", {"state": stt.state, "ollama": ollama_ok})
+    payload = {"state": stt.state, "ollama": ollama_ok}
+    if _stt_init_error:
+        payload["stt_error"] = _stt_init_error
+    emit("state_changed", payload)
 
 
 @socketio.on("start_recording")
@@ -77,6 +120,8 @@ def handle_start(data=None):
         audio_save_enabled = True
 
     state = stt.start()
+    if state == "error":
+        emit("error", {"message": f"語音模型初始化失敗：{_stt_init_error or '未知錯誤'}"})
     emit("state_changed", {"state": state})
 
 
@@ -84,6 +129,8 @@ def handle_start(data=None):
 def handle_audio_chunk(data):
     """接收二進位音頻 chunk"""
     global audio_chunk_count
+    if stt.state == "error":
+        return {"ok": False, "reason": "stt_unavailable", "error": _stt_init_error}
     if isinstance(data, dict):
         chunk = data.get("chunk", b"")
     else:
@@ -164,18 +211,29 @@ def handle_audio_recording_done():
 
 @socketio.on("pause_recording")
 def handle_pause():
+    if stt.state == "error":
+        emit("error", {"message": f"語音模型不可用：{_stt_init_error or '未知錯誤'}"})
+        emit("state_changed", {"state": "error"})
+        return
     state = stt.pause()
     emit("state_changed", {"state": state})
 
 
 @socketio.on("resume_recording")
 def handle_resume():
+    if stt.state == "error":
+        emit("error", {"message": f"語音模型不可用：{_stt_init_error or '未知錯誤'}"})
+        emit("state_changed", {"state": "error"})
+        return
     state = stt.resume()
     emit("state_changed", {"state": state})
 
 
 @socketio.on("stop_recording")
 def handle_stop():
+    if stt.state == "error":
+        emit("state_changed", {"state": "error"})
+        return
     handle_audio_recording_done()
     state, final_segments = stt.stop()
     for seg in final_segments:

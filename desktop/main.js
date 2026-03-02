@@ -9,6 +9,32 @@ const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 let backendProcess = null;
+let backendStartError = null;
+let backendExitInfo = null;
+
+function ensureBackendModelCompatPath() {
+  if (!app.isPackaged) return;
+
+  const srcModelsDir = path.join(process.resourcesPath, "models");
+  const backendInternalDir = path.join(process.resourcesPath, "backend", "_internal");
+  const compatModelsDir = path.join(backendInternalDir, "models");
+
+  try {
+    if (!fs.existsSync(srcModelsDir) || !fs.existsSync(backendInternalDir)) return;
+    if (fs.existsSync(compatModelsDir)) return;
+
+    fs.mkdirSync(backendInternalDir, { recursive: true });
+    try {
+      fs.symlinkSync(srcModelsDir, compatModelsDir, "dir");
+      console.log("[backend] created model compat symlink:", compatModelsDir, "->", srcModelsDir);
+    } catch (linkErr) {
+      fs.cpSync(srcModelsDir, compatModelsDir, { recursive: true });
+      console.log("[backend] copied model compat dir:", compatModelsDir, "(symlink failed:", String(linkErr), ")");
+    }
+  } catch (e) {
+    console.error("[backend] failed to prepare model compat path:", e);
+  }
+}
 
 function hasBundledModels() {
   if (!app.isPackaged) return false;
@@ -53,6 +79,8 @@ function waitForServer(url, timeoutMs = 30000) {
 
 function startBackend() {
   const isProd = app.isPackaged;
+  backendStartError = null;
+  backendExitInfo = null;
   if (isProd) {
     const backendName = process.platform === "win32" ? "ai_meeting_backend.exe" : "ai_meeting_backend";
     const backendPath = path.join(process.resourcesPath, "backend", backendName);
@@ -66,6 +94,16 @@ function startBackend() {
       stdio: "inherit",
     });
   }
+
+  backendProcess.on("error", (err) => {
+    backendStartError = err ? (err.message || String(err)) : "unknown spawn error";
+    console.error("[backend] spawn error:", backendStartError);
+  });
+
+  backendProcess.on("exit", (code, signal) => {
+    backendExitInfo = { code, signal };
+    console.error("[backend] exited:", backendExitInfo);
+  });
 }
 
 async function createWindow() {
@@ -73,6 +111,7 @@ async function createWindow() {
   if (bundledMode) {
     // For bundled builds, prefer a true offline path: backend must use local GGUF only.
     process.env.AMA_DISABLE_OLLAMA_FALLBACK = "1";
+    ensureBackendModelCompatPath();
   }
 
   if (!bundledMode) {
@@ -157,7 +196,13 @@ async function createWindow() {
   try {
     await waitForServer(BACKEND_URL);
   } catch (e) {
-    dialog.showErrorBox("後端啟動失敗", "無法連線到後端服務，請稍後再試。");
+    let detail = "無法連線到後端服務，請稍後再試。";
+    if (backendStartError) {
+      detail += `\n\n啟動錯誤: ${backendStartError}`;
+    } else if (backendExitInfo && (backendExitInfo.code !== null || backendExitInfo.signal)) {
+      detail += `\n\n後端已結束（code=${backendExitInfo.code}, signal=${backendExitInfo.signal || "none"}）。`;
+    }
+    dialog.showErrorBox("後端啟動失敗", detail);
   }
 
   const win = new BrowserWindow({

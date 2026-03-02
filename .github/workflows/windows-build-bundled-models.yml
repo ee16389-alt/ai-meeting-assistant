@@ -146,6 +146,54 @@ jobs:
           $env:BUNDLE_SHERPA_MODELS = "1"
           npm run build:win
 
+      - name: Build Windows unpacked app (bundled GGUF + Sherpa)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $env:BUNDLE_GGUF = "1"
+          $env:BUNDLE_SHERPA_MODELS = "1"
+          npm run build:win:dir
+
+      - name: Smoke test bundled backend health endpoint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $backend = Resolve-Path "desktop\dist\win-unpacked\resources\backend\ai_meeting_backend.exe"
+          if (-not (Test-Path $backend)) {
+            throw "Bundled backend exe not found: $backend"
+          }
+
+          $proc = Start-Process -FilePath $backend -PassThru -WindowStyle Hidden
+          try {
+            $ready = $false
+            for ($i = 0; $i -lt 60; $i++) {
+              Start-Sleep -Milliseconds 1000
+              try {
+                $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2
+                if ($resp.StatusCode -eq 200) {
+                  Write-Host "Backend health check passed."
+                  $ready = $true
+                  break
+                }
+              } catch {
+                if ($proc.HasExited) {
+                  throw "Bundled backend exited early with code $($proc.ExitCode)"
+                }
+              }
+            }
+
+            if (-not $ready) {
+              if ($proc.HasExited) {
+                throw "Bundled backend exited before becoming healthy. Exit code: $($proc.ExitCode)"
+              }
+              throw "Bundled backend did not become healthy within timeout."
+            }
+          } finally {
+            if ($proc -and -not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
+          }
+
       - name: Upload Windows bundled installer
         uses: actions/upload-artifact@v4
         with:
@@ -153,4 +201,11 @@ jobs:
           path: |
             desktop\dist\*.exe
             desktop\dist\*.blockmap
+          if-no-files-found: error
+
+      - name: Upload Windows unpacked app
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unpacked-bundled-models
+          path: desktop\dist\win-unpacked\**
           if-no-files-found: error

@@ -1,8 +1,8 @@
 flask
 flask-socketio
-faster-whisper
+sherpa-onnx
 requests
 numpy
 pydub
-audioop-lts
+audioop-lts; python_version >= "3.13"
 llama-cpp-python

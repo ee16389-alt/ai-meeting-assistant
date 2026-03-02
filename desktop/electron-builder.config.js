@@ -72,5 +72,13 @@ module.exports = {
   },
   nsis: {
     include: "build/installer.nsh",
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    perMachine: false,
+    createDesktopShortcut: "always",
+    createStartMenuShortcut: true,
+    shortcutName: "AI Meeting Assistant",
+    uninstallDisplayName: "AI Meeting Assistant",
+    deleteAppDataOnUninstall: false,
   },
 };
