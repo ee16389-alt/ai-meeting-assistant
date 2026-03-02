@@ -43,6 +43,51 @@ FORBIDDEN_SUMMARY_PATTERNS = (
     "---",
 )
 
+FILLER_PHRASES = (
+    "嗯",
+    "嗯嗯",
+    "啊",
+    "哦",
+    "然後",
+    "好",
+    "好哦",
+    "真的假的",
+    "好強哦",
+    "那我的摘要呢",
+    "已經開始錄了",
+)
+
+ACTION_KEYWORDS = (
+    "要",
+    "需要",
+    "請",
+    "確認",
+    "安排",
+    "完成",
+    "處理",
+    "整理",
+    "更新",
+    "追蹤",
+    "提交",
+    "修正",
+    "記得",
+)
+
+CHINESE_ACTION_PREFIXES = (
+    "請",
+    "需要",
+    "要",
+    "記得",
+    "先",
+    "再",
+    "安排",
+    "確認",
+    "處理",
+    "整理",
+    "更新",
+    "追蹤",
+)
+
 
 def _is_frozen() -> bool:
     return bool(getattr(sys, "frozen", False))
@@ -219,8 +264,183 @@ def _clean_transcript_lines(text: str) -> list[str]:
     return lines
 
 
+def _is_filler_line(text: str) -> bool:
+    s = re.sub(r"\s+", "", text.strip())
+    if not s:
+        return True
+    if len(s) <= 4 and s in FILLER_PHRASES:
+        return True
+    if s in FILLER_PHRASES:
+        return True
+    if len(s) <= 6 and all(ch in "嗯啊哦欸嘿哈好啦呢吧嗎呀喔然後" for ch in s):
+        return True
+    return False
+
+
+def _meaningful_transcript_lines(text: str) -> list[str]:
+    return [line for line in _clean_transcript_lines(text) if not _is_filler_line(line)]
+
+
+def _looks_like_correction_text(text: str) -> bool:
+    s = text.lower()
+    correction_markers = (
+        "should be corrected",
+        "should be",
+        "修正為",
+        "應該修正",
+        "待確認",
+        "meeting record",
+        "會議記錄時發現有誤",
+    )
+    return any(marker in s for marker in correction_markers)
+
+
+def _extract_action_lines(lines: list[str]) -> list[str]:
+    actions = []
+    for line in lines:
+        if _looks_like_correction_text(line):
+            continue
+        if "待確認" in line or "下一步" in line or "補充背景" in line:
+            continue
+        if any(k in line for k in ACTION_KEYWORDS):
+            actions.append(line)
+    return actions
+
+
+def _action_result_invalid(text: str) -> bool:
+    if not text.strip():
+        return True
+    if _looks_like_correction_text(text):
+        return True
+    return any(marker in text for marker in ("待確認", "下一步", "補充背景"))
+
+
+def _is_opening_chatter_line(text: str) -> bool:
+    s = text.strip()
+    chatter_prefixes = (
+        "哎呀",
+        "呃",
+        "啊",
+        "你要",
+        "你好好",
+        "我可以不說話",
+        "但是我常常會忍不住說",
+        "一般人就會說",
+    )
+    return any(s.startswith(prefix) for prefix in chatter_prefixes)
+
+
+def _line_summary_score(text: str) -> int:
+    s = text.strip()
+    score = min(len(s), 80)
+    if _is_opening_chatter_line(s):
+        score -= 40
+    if len(s) < 8:
+        score -= 30
+    discourse_markers = (
+        "其實",
+        "本來",
+        "不是",
+        "而是",
+        "因為",
+        "所以",
+        "如果",
+        "但是",
+        "不過",
+        "重點",
+        "問題",
+        "應該",
+        "所謂",
+    )
+    viewpoint_markers = (
+        "我認為",
+        "我覺得",
+        "他認為",
+        "她認為",
+        "坦言",
+    )
+    for marker in discourse_markers + viewpoint_markers:
+        if marker in s:
+            score += 10
+    if "，" in s or "。" in s or "；" in s:
+        score += 8
+    if s.endswith("嗎") or s.endswith("呢"):
+        score -= 14
+    if "？" in s or "!" in s or "！" in s:
+        score -= 10
+    return score
+
+
+def _select_summary_lines(lines: list[str], limit: int) -> list[str]:
+    indexed = []
+    for idx, line in enumerate(lines):
+        score = _line_summary_score(line)
+        if idx < 2:
+            score -= 12
+        indexed.append((score, len(line), idx, line))
+    ranked = sorted(indexed, key=lambda item: (item[0], item[1]), reverse=True)
+    selected = {line for _, _, _, line in ranked[:limit]}
+    return [line for line in lines if line in selected][:limit]
+
+
+def _looks_mostly_chinese(text: str) -> bool:
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    letters = sum(1 for ch in text if ch.isalpha())
+    return cjk >= max(8, letters)
+
+
+def _compress_clause(text: str) -> str:
+    s = text.strip("，。；、 ")
+    s = re.sub(r"^(其實|那麼|所以|然後|就是|而且呢?)", "", s).strip()
+    s = re.sub(r"(吧|啊|呀|哦)$", "", s).strip()
+    return s
+
+
+def _chinese_summary_fallback(lines: list[str], mode: str) -> str:
+    if not lines:
+        return "逐字稿資訊不足"
+
+    chosen = [_compress_clause(line) for line in _select_summary_lines(lines, 5)]
+    chosen = [line for line in chosen if line]
+    if not chosen:
+        return "逐字稿資訊不足"
+
+    if mode == "full":
+        parts = chosen[:3]
+        if len(parts) == 1:
+            return f"這段內容主要提到{parts[0]}。"
+        return "這段內容主要提到" + "；".join(parts[:-1]) + f"；並指出{parts[-1]}。"
+
+    if mode == "key_points":
+        return "\n".join(f"• {line}" for line in chosen[:5])
+
+    return "逐字稿資訊不足"
+
+
+def _normalize_action_items_result(text: str, transcript: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "逐字稿資訊不足"
+
+    normalized = []
+    source_lines = _meaningful_transcript_lines(transcript)
+    for line in lines:
+        body = _strip_summary_prefix(line)
+        if not body:
+            continue
+        if _action_result_invalid(body):
+            continue
+        if not any(body in src or src in body for src in source_lines):
+            continue
+        if not any(body.startswith(prefix) for prefix in CHINESE_ACTION_PREFIXES):
+            continue
+        normalized.append(f"- [ ] {body}")
+
+    return "\n".join(normalized[:5]) if normalized else "逐字稿資訊不足"
+
+
 def _is_info_insufficient(text: str) -> bool:
-    lines = _clean_transcript_lines(text)
+    lines = _meaningful_transcript_lines(text)
     if len(lines) < 2:
         return True
     joined = "".join(lines)
@@ -240,63 +460,55 @@ def _summary_has_out_of_transcript_text(summary: str, transcript: str) -> bool:
     for p in FORBIDDEN_SUMMARY_PATTERNS:
         if p in summary:
             return True
-
-    source_lines = _clean_transcript_lines(transcript)
-    if not source_lines:
+    if _looks_like_correction_text(summary):
         return True
-
-    for raw in summary.splitlines():
-        line = _strip_summary_prefix(raw)
-        if not line:
-            continue
-        if line == "逐字稿資訊不足":
-            continue
-        # Require each content line to be an exact substring of original transcript lines.
-        if not any(line in src for src in source_lines):
-            return True
     return False
 
 
 def _extractive_fallback(transcript: str, mode: str) -> str:
-    lines = _clean_transcript_lines(transcript)
+    lines = _meaningful_transcript_lines(transcript)
     if len(lines) < 2 or len("".join(lines)) < 20:
         return "逐字稿資訊不足"
 
-    # Prefer longer lines and keep original wording only.
-    ranked = sorted(lines, key=len, reverse=True)
-    selected = ranked[:5]
-    # Restore source order after selecting.
-    selected_set = set(selected)
-    ordered = [line for line in lines if line in selected_set][:5]
+    if mode == "action_items":
+        actions = _extract_action_lines(lines)
+        if not actions:
+            return "逐字稿資訊不足"
+        return "\n".join(f"- [ ] {line}" for line in actions[:5])
+
+    if _looks_mostly_chinese("".join(lines)):
+        return _chinese_summary_fallback(lines, mode)
+
+    ordered = _select_summary_lines(lines, 5)
 
     if mode == "full":
         return "\n".join(ordered[:3]) if ordered else "逐字稿資訊不足"
     if mode == "key_points":
         return "\n".join(f"• {line}" for line in ordered[:5]) if ordered else "逐字稿資訊不足"
-    if mode == "action_items":
-        return "\n".join(f"- [ ] {line}" for line in ordered[:5]) if ordered else "逐字稿資訊不足"
     return "逐字稿資訊不足"
 
 
 def _insufficient_info_fallback(transcript: str, mode: str) -> str:
-    lines = _clean_transcript_lines(transcript)
+    lines = _meaningful_transcript_lines(transcript)
     if not lines:
         return "逐字稿資訊不足"
 
     note = "（逐字稿資訊不足，故此呈現）"
-    chosen = lines[:5]
+    chosen = _select_summary_lines(lines, 5)
 
     if mode == "full":
         return note + "\n" + "\n".join(chosen[:3])
 
     if mode == "key_points":
-        keywords = ("要", "需要", "請", "先", "後", "確認", "聯絡", "安排", "完成", "處理")
-        inferred = [line for line in chosen if any(k in line for k in keywords)]
+        inferred = _extract_action_lines(chosen)
         base = inferred if inferred else chosen
         return note + "\n" + "\n".join(f"• {line}" for line in base[:5])
 
     if mode == "action_items":
-        return note + "\n" + "\n".join(f"- [ ] {line}" for line in chosen[:5])
+        actions = _extract_action_lines(chosen)
+        if not actions:
+            return "逐字稿資訊不足"
+        return "\n".join(f"- [ ] {line}" for line in actions[:5])
 
     return note + "\n" + "\n".join(chosen[:3])
 
@@ -306,6 +518,11 @@ def _summarize_with_guard(mode: str, text: str, system_prompt: str) -> str:
         return _insufficient_info_fallback(text, mode)
 
     result = _call_model(system_prompt, text).strip()
+    if mode == "action_items":
+        normalized = _normalize_action_items_result(result, text)
+        if normalized != "逐字稿資訊不足":
+            return normalized
+        return _extractive_fallback(text, mode)
     if _summary_has_out_of_transcript_text(result, text):
         return _extractive_fallback(text, mode)
     return result or "逐字稿資訊不足"
@@ -370,9 +587,10 @@ def summarize_full(text: str) -> str:
     """全文摘要"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
-        "請以抽取為主、必要時可做精簡改寫。"
+        "請用繁體中文輸出。"
+        "可在不改變原意下做高度精簡與重述。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        "請輸出一段精簡摘要，保留原句的關鍵內容與術語。"
+        "請輸出一段精簡摘要，整理主要脈絡、重點與結論。"
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
@@ -383,9 +601,11 @@ def summarize_key_points(text: str) -> str:
     """重點條列摘要"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
-        "請以抽取為主、必要時可做精簡改寫。"
+        "請用繁體中文輸出。"
+        "可在不改變原意下做高度精簡與重述。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
         "以條列式呈現，每個重點用「•」開頭，列出 3-8 點。"
+        "請整理成有資訊量的重點，不要逐句照抄逐字稿。"
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
@@ -396,9 +616,13 @@ def extract_action_items(text: str) -> str:
     """提取待辦清單"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
+        "請用繁體中文輸出。"
         "請以抽取為主、必要時可做精簡改寫。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        "使用繁體中文，每個項目用「- [ ]」格式呈現。"
+        "只列出明確的待辦、後續動作、要確認的事項。"
+        "不得輸出逐字稿校正建議、英文改寫建議、錯字修正文。"
+        "如果逐字稿只是分享經驗、敘述背景，沒有明確指派動作，請直接輸出「逐字稿資訊不足」。"
+        "使用繁體中文，每個項目獨立一行，且每個項目用「- [ ]」格式呈現。"
         "若資訊不足或無待辦事項，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
