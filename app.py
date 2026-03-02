@@ -86,6 +86,21 @@ audio_file_handle = None
 current_meeting_name = ""
 
 
+def _meeting_output_dir(meeting_name: str) -> str:
+    safe_name = (meeting_name or "").strip() or current_meeting_name or time.strftime("meeting_%Y%m%d_%H%M%S")
+    return os.path.join(os.path.dirname(__file__), "download", safe_name)
+
+
+def _open_folder(path: str) -> None:
+    if sys.platform.startswith("win"):
+        os.startfile(path)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "darwin":
+        os.system(f'open "{path}"')
+        return
+    os.system(f'xdg-open "{path}"')
+
+
 @app.route("/")
 def index():
     return render_template("index.html")
@@ -306,6 +321,28 @@ def handle_summary(data):
     socketio.start_background_task(_generate_summary, mode, full_text)
 
 
+@socketio.on("get_storage_path")
+def handle_get_storage_path(data=None):
+    meeting_name = ""
+    if isinstance(data, dict):
+        meeting_name = (data.get("meeting_name") or "").strip()
+    emit("storage_path", {"path": _meeting_output_dir(meeting_name)})
+
+
+@socketio.on("open_storage_folder")
+def handle_open_storage_folder(data=None):
+    meeting_name = ""
+    if isinstance(data, dict):
+        meeting_name = (data.get("meeting_name") or "").strip()
+    target = _meeting_output_dir(meeting_name)
+    os.makedirs(target, exist_ok=True)
+    try:
+        _open_folder(target)
+        emit("folder_opened", {"path": target})
+    except Exception as e:
+        emit("error", {"message": f"無法開啟資料夾：{e}"})
+
+
 @socketio.on("export_meeting")
 def handle_export(data):
     meeting_name = data.get("meeting_name", "").strip()
@@ -416,7 +453,7 @@ def _export_meeting(meeting_name: str):
     summary_content = "\n".join(summary_lines)
 
     # 寫入檔案
-    export_dir = os.path.join(os.path.dirname(__file__), "download", meeting_name)
+    export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
     transcript_path = os.path.join(export_dir, "transcript.txt")
     summary_path = os.path.join(export_dir, "summary.txt")
@@ -430,10 +467,12 @@ def _export_meeting(meeting_name: str):
             {
                 "filename": f"{meeting_name}_transcript.txt",
                 "content": transcript_content,
+                "saved_path": transcript_path,
             },
             {
                 "filename": f"{meeting_name}_summary.txt",
                 "content": summary_content,
+                "saved_path": summary_path,
             },
         ]
     })
@@ -477,7 +516,7 @@ def _export_summary(meeting_name: str, mode: str):
         summary_lines.append(summary_actions)
     summary_content = "\n".join(summary_lines)
 
-    export_dir = os.path.join(os.path.dirname(__file__), "download", meeting_name)
+    export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
     summary_path = os.path.join(export_dir, "summary.txt")
     with open(summary_path, "w", encoding="utf-8") as f:
@@ -488,6 +527,7 @@ def _export_summary(meeting_name: str, mode: str):
             {
                 "filename": f"{meeting_name}_summary.txt",
                 "content": summary_content,
+                "saved_path": summary_path,
             },
         ]
     })
