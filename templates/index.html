@@ -179,12 +179,44 @@
             outline: 2px solid #fdba74;
             outline-offset: 2px;
         }
+        .diag-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+        .diag-card {
+            background: rgba(255, 255, 255, 0.78);
+            border: 1px solid rgba(148, 163, 184, 0.22);
+            border-radius: 14px;
+            padding: 10px 12px;
+        }
+        .diag-label {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+        }
+        .diag-value {
+            margin-top: 6px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #0f172a;
+        }
+        .diag-sub {
+            margin-top: 2px;
+            font-size: 12px;
+            color: #64748b;
+            word-break: break-word;
+        }
         @media (max-width: 1024px) {
             .panel-header { height: auto; min-height: 108px; }
             .panel-body { height: calc(520px - 108px); }
+            .diag-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 768px) {
             .panel-body { height: 360px; }
+            .diag-strip { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -234,6 +266,31 @@
                 </div>
             </div>
         </header>
+
+        <section class="mb-8 glass p-4 rounded-2xl card-pop float-in">
+            <div class="diag-strip">
+                <div class="diag-card">
+                    <div class="diag-label">Mic</div>
+                    <div id="diag-mic" class="diag-value">初始化中</div>
+                    <div id="diag-mic-sub" class="diag-sub">等待麥克風</div>
+                </div>
+                <div class="diag-card">
+                    <div class="diag-label">Audio Chunk</div>
+                    <div id="diag-chunk" class="diag-value">0</div>
+                    <div id="diag-chunk-sub" class="diag-sub">尚未送出</div>
+                </div>
+                <div class="diag-card">
+                    <div class="diag-label">Backend Ack</div>
+                    <div id="diag-ack" class="diag-value">0</div>
+                    <div id="diag-ack-sub" class="diag-sub">等待後端回應</div>
+                </div>
+                <div class="diag-card">
+                    <div class="diag-label">Transcript</div>
+                    <div id="diag-transcript" class="diag-value">0 行</div>
+                    <div id="diag-transcript-sub" class="diag-sub">尚未收到逐字稿</div>
+                </div>
+            </div>
+        </section>
 
         <!-- MAIN CONTENT -->
         <main class="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -440,6 +497,10 @@
         let lastMeetingNameUsed = '';
         let transcriptOpsLockedBySummary = false;
         let summaryRequestInFlight = 0;
+        let diagSentChunks = 0;
+        let diagAckChunks = 0;
+        let diagAckErrors = 0;
+        let diagTranscriptLines = 0;
 
         const I18N = {
             zh: {
@@ -598,6 +659,49 @@
             return text;
         }
 
+        function setDiagValue(id, value, subValue) {
+            const main = document.getElementById(id);
+            const sub = document.getElementById(`${id}-sub`);
+            if (main) main.textContent = value;
+            if (sub && typeof subValue === 'string') sub.textContent = subValue;
+        }
+
+        function resetDiagnostics() {
+            diagSentChunks = 0;
+            diagAckChunks = 0;
+            diagAckErrors = 0;
+            diagTranscriptLines = 0;
+            setDiagValue('diag-chunk', '0', '尚未送出');
+            setDiagValue('diag-ack', '0', '等待後端回應');
+            setDiagValue('diag-transcript', '0 行', '尚未收到逐字稿');
+        }
+
+        function updateMicDiag(state, detail) {
+            setDiagValue('diag-mic', state, detail || '');
+        }
+
+        function updateChunkDiag() {
+            setDiagValue('diag-chunk', String(diagSentChunks), diagSentChunks ? '前端已送出音訊 chunk' : '尚未送出');
+        }
+
+        function updateAckDiag(ok, detail) {
+            if (ok) {
+                diagAckChunks += 1;
+                setDiagValue('diag-ack', String(diagAckChunks), detail || '後端已收到音訊 chunk');
+            } else {
+                diagAckErrors += 1;
+                setDiagValue('diag-ack', `錯誤 ${diagAckErrors}`, detail || '後端未接受音訊');
+            }
+        }
+
+        function updateTranscriptDiag() {
+            setDiagValue(
+                'diag-transcript',
+                `${diagTranscriptLines} 行`,
+                diagTranscriptLines ? '已收到逐字稿更新' : '尚未收到逐字稿'
+            );
+        }
+
         function applyI18n() {
             document.documentElement.lang = currentLang === 'zh' ? 'zh-TW' : 'en';
             document.title = `${t('app_title')} v1.1.0`;
@@ -653,6 +757,9 @@
             }
             updateUI();
             refreshStoragePath();
+            if (data.stt_error) {
+                updateAckDiag(false, data.stt_error);
+            }
         });
 
 
@@ -675,6 +782,8 @@
         socket.on('transcript_update', (data) => {
             clearPartialLine();
             addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
+            diagTranscriptLines += 1;
+            updateTranscriptDiag();
         });
 
         socket.on('transcript_partial', (data) => {
@@ -739,6 +848,7 @@
                 summaryRequestInFlight = 0;
                 setTranscriptOpsLocked(false);
             }
+            updateAckDiag(false, data.message || '未知錯誤');
             alert(data.message);
         });
 
@@ -823,6 +933,8 @@
                 if (micInitError) {
                     throw new Error(micInitError);
                 }
+                resetDiagnostics();
+                updateMicDiag('已就緒', '麥克風已取得');
 
                 // 若需要儲存錄音檔，啟用 MediaRecorder 並串流到後端
                 const saveAudio = document.getElementById('save-audio').checked;
@@ -883,6 +995,7 @@
                 `;
                 lucide.createIcons();
             } catch (err) {
+                updateMicDiag('失敗', err.message || String(err));
                 alert(t('alert_mic_error') + err.message);
                 // 還原按鈕狀態
                 currentState = 'idle';
@@ -968,8 +1081,18 @@
                         const input = e.inputBuffer.getChannelData(0);
                         const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
                         const pcm16 = floatTo16BitPCM(downsampled);
+                        diagSentChunks += 1;
+                        updateChunkDiag();
                         socket.emit('audio_chunk', { chunk: pcm16.buffer }, (ack) => {
-                            // console.log('audio_chunk ack:', ack);
+                            if (!ack) {
+                                updateAckDiag(false, '沒有收到 backend ack');
+                                return;
+                            }
+                            if (ack.ok) {
+                                updateAckDiag(true, `最後大小 ${ack.size || 0} bytes`);
+                            } else {
+                                updateAckDiag(false, ack.error || ack.reason || 'backend 拒絕音訊');
+                            }
                         });
                     };
 
@@ -979,9 +1102,11 @@
 
                 micReady = true;
                 micInitError = null;
+                updateMicDiag('已就緒', '待開始錄音');
             } catch (err) {
                 micInitError = err && err.message ? err.message : String(err);
                 micReady = false;
+                updateMicDiag('失敗', micInitError);
             }
         }
 
@@ -1803,6 +1928,7 @@
         window.addEventListener('load', () => {
             initMic();
             refreshStoragePath();
+            resetDiagnostics();
         });
 
         applyI18n();
