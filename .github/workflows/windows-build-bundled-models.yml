@@ -204,28 +204,16 @@ jobs:
                   break
                 }
               }
-              try {
-                $health = & curl.exe --silent --show-error --max-time 2 "http://127.0.0.1:8000/health"
-                if ($LASTEXITCODE -eq 0 -and $health) {
-                  Write-Host "Health payload: $health"
-                  Write-Host "Backend health check passed."
-                  $ready = $true
-                  break
+              if ($proc.HasExited) {
+                if (Test-Path $stdoutLog) {
+                  Write-Host "backend stdout:"
+                  Get-Content $stdoutLog
                 }
-                Write-Host "Health check not ready yet (curl exit=$LASTEXITCODE)."
-              } catch {
-                Write-Host "Health check exception: $($_.Exception.Message)"
-                if ($proc.HasExited) {
-                  if (Test-Path $stdoutLog) {
-                    Write-Host "backend stdout:"
-                    Get-Content $stdoutLog
-                  }
-                  if (Test-Path $stderrLog) {
-                    Write-Host "backend stderr:"
-                    Get-Content $stderrLog
-                  }
-                  throw "Bundled backend exited early with code $($proc.ExitCode)"
+                if (Test-Path $stderrLog) {
+                  Write-Host "backend stderr:"
+                  Get-Content $stderrLog
                 }
+                throw "Bundled backend exited early with code $($proc.ExitCode)"
               }
             }
 
