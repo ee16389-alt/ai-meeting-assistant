@@ -11,10 +11,12 @@ from pathlib import Path
 
 import requests
 
+_LLAMA_IMPORT_ERROR: str | None = None
 try:
     from llama_cpp import Llama  # type: ignore
-except Exception:
+except Exception as e:
     Llama = None  # type: ignore[assignment]
+    _LLAMA_IMPORT_ERROR = str(e)
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
@@ -174,7 +176,7 @@ def _load_local_llm():
     if _LOCAL_LLM is not None:
         return _LOCAL_LLM
     if Llama is None:
-        _LOCAL_LLM_LOAD_ERROR = "llama-cpp-python 未安裝"
+        _LOCAL_LLM_LOAD_ERROR = f"llama-cpp-python 無法載入: {_LLAMA_IMPORT_ERROR or 'unknown import error'}"
         return None
 
     gguf_path = _find_local_gguf_path()
@@ -454,8 +456,14 @@ def _strip_summary_prefix(line: str) -> str:
     return s.strip()
 
 
+def _is_error_result(text: str) -> bool:
+    return text.strip().startswith("[錯誤]")
+
+
 def _summary_has_out_of_transcript_text(summary: str, transcript: str) -> bool:
     if not summary.strip():
+        return True
+    if _is_error_result(summary):
         return True
     for p in FORBIDDEN_SUMMARY_PATTERNS:
         if p in summary:
@@ -518,6 +526,8 @@ def _summarize_with_guard(mode: str, text: str, system_prompt: str) -> str:
         return _insufficient_info_fallback(text, mode)
 
     result = _call_model(system_prompt, text).strip()
+    if _is_error_result(result):
+        return _extractive_fallback(text, mode)
     if mode == "action_items":
         normalized = _normalize_action_items_result(result, text)
         if normalized != "逐字稿資訊不足":
@@ -638,3 +648,43 @@ def check_health() -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+
+def summary_engine_status() -> dict:
+    """提供摘要引擎目前的可用性與診斷資訊。"""
+    gguf_path = _find_local_gguf_path()
+    ollama_ok = False
+    try:
+        resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+        ollama_ok = resp.status_code == 200
+    except Exception:
+        ollama_ok = False
+
+    if Llama is not None and gguf_path is not None:
+        return {
+            "ready": True,
+            "mode": "local_gguf",
+            "gguf_path": str(gguf_path),
+            "error": None,
+        }
+
+    if ollama_ok:
+        return {
+            "ready": True,
+            "mode": "ollama",
+            "gguf_path": str(gguf_path) if gguf_path else None,
+            "error": _LOCAL_LLM_LOAD_ERROR or _LLAMA_IMPORT_ERROR,
+        }
+
+    error = _LOCAL_LLM_LOAD_ERROR
+    if error is None and Llama is None:
+        error = f"llama-cpp-python 無法載入: {_LLAMA_IMPORT_ERROR or 'unknown import error'}"
+    if error is None and gguf_path is None:
+        error = "找不到 GGUF 模型檔"
+
+    return {
+        "ready": False,
+        "mode": "unavailable",
+        "gguf_path": str(gguf_path) if gguf_path else None,
+        "error": error,
+    }

@@ -18,15 +18,20 @@ def main():
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    data_sep = ";" if os.name == "nt" else ":"
+
     run([
         "pyinstaller",
         "--clean",
         "--onefile",
+        "--noconsole",
         "--name", "ai_meeting_backend",
-        "--add-data", "templates:templates",
-        "--add-data", "static:static",
+        "--add-data", f"templates{data_sep}templates",
+        "--add-data", f"static{data_sep}static",
+        "--collect-all", "llama_cpp",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "simple_websocket",
+        "--hidden-import", "llama_cpp",
         "app.py",
     ])
 

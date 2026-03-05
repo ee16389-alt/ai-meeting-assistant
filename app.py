@@ -27,6 +27,7 @@ from cognition import (
     summarize_key_points,
     extract_action_items,
     check_health,
+    summary_engine_status,
 )
 
 app = Flask(__name__)
@@ -86,9 +87,23 @@ audio_file_handle = None
 current_meeting_name = ""
 
 
+def _export_root_dir() -> str:
+    configured = (os.environ.get("AMA_EXPORT_ROOT") or "").strip()
+    if configured:
+        return configured
+
+    home = os.path.expanduser("~")
+    if sys.platform.startswith("win"):
+        documents = os.path.join(home, "Documents")
+        return os.path.join(documents, "AI Meeting Assistant")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Documents", "AI Meeting Assistant")
+    return os.path.join(home, "ai-meeting-assistant")
+
+
 def _meeting_output_dir(meeting_name: str) -> str:
     safe_name = (meeting_name or "").strip() or current_meeting_name or time.strftime("meeting_%Y%m%d_%H%M%S")
-    return os.path.join(os.path.dirname(__file__), "download", safe_name)
+    return os.path.join(_export_root_dir(), "download", safe_name)
 
 
 def _open_folder(path: str) -> None:
@@ -108,10 +123,15 @@ def index():
 
 @app.route("/health")
 def health():
+    summary_status = summary_engine_status()
     return {
         "ok": True,
         "stt_ready": stt.state != "error",
         "stt_error": _stt_init_error or None,
+        "summary_ready": summary_status["ready"],
+        "summary_mode": summary_status["mode"],
+        "summary_error": summary_status["error"],
+        "summary_gguf_path": summary_status["gguf_path"],
     }
 
 
@@ -158,7 +178,10 @@ def handle_start(data=None):
     state = stt.start()
     if state == "error":
         emit("error", {"message": f"語音模型初始化失敗：{_stt_init_error or '未知錯誤'}"})
+        emit("state_changed", {"state": state})
+        return {"ok": False, "state": state, "error": _stt_init_error or "未知錯誤"}
     emit("state_changed", {"state": state})
+    return {"ok": True, "state": state}
 
 
 @socketio.on("audio_chunk")
@@ -265,9 +288,10 @@ def handle_pause():
     if stt.state == "error":
         emit("error", {"message": f"語音模型不可用：{_stt_init_error or '未知錯誤'}"})
         emit("state_changed", {"state": "error"})
-        return
+        return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
     state = stt.pause()
     emit("state_changed", {"state": state})
+    return {"ok": True, "state": state}
 
 
 @socketio.on("resume_recording")
@@ -275,16 +299,17 @@ def handle_resume():
     if stt.state == "error":
         emit("error", {"message": f"語音模型不可用：{_stt_init_error or '未知錯誤'}"})
         emit("state_changed", {"state": "error"})
-        return
+        return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
     state = stt.resume()
     emit("state_changed", {"state": state})
+    return {"ok": True, "state": state}
 
 
 @socketio.on("stop_recording")
 def handle_stop():
     if stt.state == "error":
         emit("state_changed", {"state": "error"})
-        return
+        return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
     handle_audio_recording_done()
     state, final_segments = stt.stop()
     socketio.emit("transcript_partial_clear")
@@ -305,6 +330,7 @@ def handle_stop():
         )
 
     socketio.emit("state_changed", {"state": "idle"})
+    return {"ok": True, "state": "idle"}
 
 
 @socketio.on("request_summary")

@@ -264,6 +264,7 @@
                         </label>
                     </div>
                 </div>
+                <div id="session-stage" class="hidden text-sm rounded-xl border px-4 py-3 bg-white/80 border-slate-200 text-slate-700"></div>
             </div>
         </header>
 
@@ -450,7 +451,7 @@
                 </div>
                 <div>
                     <div class="font-semibold text-slate-900 mb-1">5. 匯出檔案</div>
-                    <div>可匯出逐字稿與摘要，檔案會下載到你的電腦，並同步寫入專案的 <code>download/</code> 目錄。</div>
+                    <div>可匯出逐字稿與摘要，檔案會同步寫入電腦的固定資料夾，並可直接用「開啟存放資料夾」查看。</div>
                 </div>
                 <div>
                     <div class="font-semibold text-slate-900 mb-1">6. 離線使用說明</div>
@@ -486,6 +487,8 @@
         let languageModesCache = null;
         let connectionState = 'connecting';
         let transcriptBackupState = null;
+        let recordingSessionReady = false;
+        let lastCompletedMeetingName = '';
         let hasEnhancedTranscript = false;
         let isTranscriptEditing = false;
         let transcriptRawLines = [];
@@ -570,6 +573,12 @@
                 alert_switch_model_blocked: '錄音中無法切換模型，請先停止再切換。',
                 alert_switch_language_blocked: '錄音中無法切換語言，請先停止再切換。',
                 alert_edit_blocked: '錄音中無法編輯逐字稿，請先停止。',
+                session_idle_hint: '準備開始新的會議。請輸入會議名稱後按「開始會議」。',
+                session_recording_hint: '目前正在錄音，可按「暫停」或「停止」。',
+                session_paused_hint: '錄音已暫停，可按「繼續」或「停止」。',
+                session_processing_hint: '正在整理最後一段音訊，請稍候。',
+                session_finished_hint: '本次會議「{name}」已結束。若要開始下一場，請輸入新的會議名稱後按「開始會議」。',
+                toast_session_finished: '本次會議已結束，可以開始下一場。',
                 toast_model_switched: '模型已切換：{model}',
                 model_unready: ' (未就緒)',
             },
@@ -640,6 +649,12 @@
                 alert_switch_model_blocked: 'Cannot change model while recording. Stop first.',
                 alert_switch_language_blocked: 'Cannot change language while recording. Stop first.',
                 alert_edit_blocked: 'Editing is disabled while recording. Stop first.',
+                session_idle_hint: 'Ready for a new meeting. Enter a meeting name and click Start.',
+                session_recording_hint: 'Recording in progress. You can pause or stop.',
+                session_paused_hint: 'Recording is paused. You can resume or stop.',
+                session_processing_hint: 'Processing the final audio segment. Please wait.',
+                session_finished_hint: 'Meeting "{name}" has ended. To start the next one, enter a new meeting name and click Start.',
+                toast_session_finished: 'This meeting has ended. You can start the next one.',
                 toast_model_switched: 'Model switched: {model}',
                 model_unready: ' (Unavailable)',
             },
@@ -664,6 +679,34 @@
             const sub = document.getElementById(`${id}-sub`);
             if (main) main.textContent = value;
             if (sub && typeof subValue === 'string') sub.textContent = subValue;
+        }
+
+        function updateSessionStage() {
+            const el = document.getElementById('session-stage');
+            if (!el) return;
+
+            let text = '';
+            let className = 'text-sm rounded-xl border px-4 py-3 ';
+            if (currentState === 'recording') {
+                text = t('session_recording_hint');
+                className += 'bg-red-50 border-red-200 text-red-700';
+            } else if (currentState === 'paused') {
+                text = t('session_paused_hint');
+                className += 'bg-amber-50 border-amber-200 text-amber-700';
+            } else if (currentState === 'stopped') {
+                text = t('session_processing_hint');
+                className += 'bg-slate-50 border-slate-200 text-slate-700';
+            } else if (lastCompletedMeetingName) {
+                text = tFormat('session_finished_hint', { name: lastCompletedMeetingName });
+                className += 'bg-emerald-50 border-emerald-200 text-emerald-700';
+            } else {
+                text = t('session_idle_hint');
+                className += 'bg-white/80 border-slate-200 text-slate-700';
+            }
+
+            el.textContent = text;
+            el.className = className;
+            el.classList.remove('hidden');
         }
 
         function resetDiagnostics() {
@@ -717,6 +760,7 @@
                 applyLanguageOptions(languageModesCache, currentLangMode);
             }
             setConnectionStatus(connectionState);
+            updateSessionStage();
         }
 
         // ── SocketIO 事件監聽 ───────────────────────────
@@ -745,10 +789,17 @@
 
         socket.on('disconnect', () => {
             setConnectionStatus('disconnected');
+            recordingSessionReady = false;
+        });
+
+        socket.on('connect_error', () => {
+            setConnectionStatus('disconnected');
+            recordingSessionReady = false;
         });
 
         socket.on('state_changed', (data) => {
             currentState = data.state;
+            recordingSessionReady = data.state === 'recording' || data.state === 'paused';
             if (data.stt_models) {
                 applyModelOptions(data.stt_models, (data.stt_model && data.stt_model.key) || data.stt_model);
             }
@@ -817,16 +868,18 @@
             if (data.files && Array.isArray(data.files)) {
                 const firstPath = data.files[0] && data.files[0].saved_path;
                 if (firstPath) {
-                    updateStoragePathDisplay(firstPath);
-                    showToast(`已同步寫入：${firstPath}`);
+                    const dirPath = toDirectoryPath(firstPath);
+                    updateStoragePathDisplay(dirPath);
+                    showToast(`已同步寫入資料夾：${dirPath}`);
                 } else {
                     showToast('已完成匯出（僅寫入專案資料夾）');
                 }
                 return;
             }
             if (data.saved_path) {
-                updateStoragePathDisplay(data.saved_path);
-                showToast(`已同步寫入：${data.saved_path}`);
+                const dirPath = toDirectoryPath(data.saved_path);
+                updateStoragePathDisplay(dirPath);
+                showToast(`已同步寫入資料夾：${dirPath}`);
             } else {
                 showToast('已完成匯出（僅寫入專案資料夾）');
             }
@@ -861,12 +914,65 @@
                     startRecordingWithCountdown();
                     break;
                 case 'recording':
-                    pauseRecording();
+                    pauseRecording().catch((err) => {
+                        updateAckDiag(false, err.message || String(err));
+                        showToast(err.message || String(err));
+                    });
                     break;
                 case 'paused':
-                    resumeRecording();
+                    resumeRecording().catch((err) => {
+                        updateAckDiag(false, err.message || String(err));
+                        showToast(err.message || String(err));
+                    });
                     break;
             }
+        }
+
+        function emitWithAck(event, payload, timeoutMs = 8000) {
+            return new Promise((resolve, reject) => {
+                let settled = false;
+                const timer = window.setTimeout(() => {
+                    if (settled) return;
+                    settled = true;
+                    reject(new Error(`${event} ack timeout`));
+                }, timeoutMs);
+
+                socket.emit(event, payload, (ack) => {
+                    if (settled) return;
+                    settled = true;
+                    window.clearTimeout(timer);
+                    resolve(ack || null);
+                });
+            });
+        }
+
+        function cleanupRecordingGraph({ releaseStream = false } = {}) {
+            recordingSessionReady = false;
+
+            if (processor) {
+                try {
+                    processor.disconnect();
+                } catch (_) {}
+                processor.onaudioprocess = null;
+                processor = null;
+            }
+            if (audioSourceNode) {
+                try {
+                    audioSourceNode.disconnect();
+                } catch (_) {}
+                audioSourceNode = null;
+            }
+            if (audioContext) {
+                if (audioContext.state !== 'closed') {
+                    audioContext.close().catch(() => {});
+                }
+                audioContext = null;
+            }
+            if (releaseStream && audioStream) {
+                audioStream.getTracks().forEach((t) => t.stop());
+                audioStream = null;
+            }
+            micReady = false;
         }
 
         function startRecordingWithCountdown() {
@@ -927,6 +1033,9 @@
             lucide.createIcons();
 
             try {
+                if (!socket.connected) {
+                    throw new Error('目前未連線到後端服務');
+                }
                 if (!micReady || !processor || !audioContext) {
                     await initMic();
                 }
@@ -958,11 +1067,16 @@
                 }
 
                 // 先通知伺服器再啟動錄音，確保伺服器已就緒
-                socket.emit('start_recording', {
+                const startAck = await emitWithAck('start_recording', {
                     meeting_name: meetingName,
                     save_audio: saveAudio,
                     language_mode: currentLangMode,
                 });
+                if (!startAck || !startAck.ok) {
+                    throw new Error((startAck && startAck.error) || '後端未接受錄音開始請求');
+                }
+                recordingSessionReady = true;
+                lastCompletedMeetingName = '';
                 isRecording = true;
                 meetingInput.disabled = true;
 
@@ -995,6 +1109,7 @@
                 `;
                 lucide.createIcons();
             } catch (err) {
+                cleanupRecordingGraph();
                 updateMicDiag('失敗', err.message || String(err));
                 alert(t('alert_mic_error') + err.message);
                 // 還原按鈕狀態
@@ -1006,52 +1121,59 @@
             }
         }
 
-        function pauseRecording() {
+        async function pauseRecording() {
             if (audioContext && audioContext.state === 'running') {
-                audioContext.suspend();
+                await audioContext.suspend();
             }
             isRecording = false;
-            socket.emit('pause_recording');
+            recordingSessionReady = false;
+            await emitWithAck('pause_recording', {});
         }
 
-        function resumeRecording() {
+        async function resumeRecording() {
             if (audioContext && audioContext.state === 'suspended') {
-                audioContext.resume();
+                await audioContext.resume();
             }
+            const ack = await emitWithAck('resume_recording', {});
+            if (!ack || !ack.ok) {
+                recordingSessionReady = false;
+                throw new Error((ack && ack.error) || '後端未接受繼續錄音請求');
+            }
+            recordingSessionReady = true;
             isRecording = true;
-            socket.emit('resume_recording');
         }
 
-        function stopRecording() {
-            const meetingInput = document.getElementById('meeting-name');
-            const previousMeetingName = meetingInput.value.trim();
-            isRecording = false;
-            if (processor) {
-                processor.disconnect();
-                processor = null;
+        async function stopRecording() {
+            try {
+                const meetingInput = document.getElementById('meeting-name');
+                const previousMeetingName = meetingInput.value.trim();
+                isRecording = false;
+                recordingSessionReady = false;
+                if (mediaRecorder) {
+                    mediaRecorder.stop();
+                }
+                cleanupRecordingGraph({ releaseStream: true });
+                await emitWithAck('stop_recording', {}).catch(() => null);
+                if (previousMeetingName) {
+                    lastMeetingNameUsed = previousMeetingName;
+                    lastCompletedMeetingName = previousMeetingName;
+                }
+                meetingInput.value = '';
+                meetingInput.disabled = false;
+                refreshStoragePath();
+                meetingInput.focus();
+                updateSessionStage();
+                showToast(t('toast_session_finished'));
+            } catch (err) {
+                updateAckDiag(false, err.message || String(err));
+                showToast(err.message || String(err));
             }
-            if (mediaRecorder) {
-                mediaRecorder.stop();
-            }
-            if (audioContext && audioContext.state === 'running') {
-                audioContext.suspend();
-            }
-            socket.emit('stop_recording');
-            if (previousMeetingName) {
-                lastMeetingNameUsed = previousMeetingName;
-            }
-            meetingInput.value = '';
-            meetingInput.disabled = false;
-            refreshStoragePath();
-            meetingInput.focus();
         }
 
         async function initMic() {
             try {
-                if (audioContext && audioContext.state === 'closed') {
-                    audioContext = null;
-                    audioSourceNode = null;
-                    processor = null;
+                if (audioStream && audioStream.getTracks().every((track) => track.readyState === 'ended')) {
+                    audioStream = null;
                 }
 
                 if (!audioStream) {
@@ -1077,7 +1199,7 @@
                     processor = audioContext.createScriptProcessor(4096, 1, 1);
 
                     processor.onaudioprocess = (e) => {
-                        if (!isRecording) return;
+                        if (!isRecording || !recordingSessionReady || !socket.connected) return;
                         const input = e.inputBuffer.getChannelData(0);
                         const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
                         const pcm16 = floatTo16BitPCM(downsampled);
@@ -1113,22 +1235,7 @@
         }
 
         window.addEventListener('beforeunload', () => {
-            if (processor) {
-                processor.disconnect();
-                processor = null;
-            }
-            if (audioSourceNode) {
-                audioSourceNode.disconnect();
-                audioSourceNode = null;
-            }
-            if (audioContext) {
-                audioContext.close();
-                audioContext = null;
-            }
-            if (audioStream) {
-                audioStream.getTracks().forEach(t => t.stop());
-                audioStream = null;
-            }
+            cleanupRecordingGraph({ releaseStream: true });
         });
 
         // ── UI 更新 ────────────────────────────────────
@@ -1195,6 +1302,7 @@
                 el.classList.toggle('opacity-50', locked);
                 el.classList.toggle('cursor-not-allowed', locked);
             });
+            updateSessionStage();
             lucide.createIcons();
         }
 
@@ -1862,6 +1970,18 @@
             if (el) {
                 el.textContent = latestStoragePath;
             }
+        }
+
+        function toDirectoryPath(path) {
+            if (!path) return '';
+            const normalized = String(path).replace(/[\\/]+$/, '');
+            if (!normalized) return '';
+            if (/\.[a-z0-9]{1,8}$/i.test(normalized)) {
+                const parts = normalized.split(/[\\/]/);
+                parts.pop();
+                return parts.join('\\');
+            }
+            return normalized;
         }
 
         function refreshStoragePath() {

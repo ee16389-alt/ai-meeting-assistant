@@ -11,6 +11,19 @@ const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 let backendProcess = null;
 let backendStartError = null;
 let backendExitInfo = null;
+let backendRecentLogs = [];
+
+function appendBackendLog(stream, chunk) {
+  const text = chunk ? chunk.toString() : "";
+  if (!text) return;
+
+  const lines = text.split(/\r?\n/).filter(Boolean);
+  lines.forEach((line) => console.log(`[backend:${stream}] ${line}`));
+  backendRecentLogs.push(...lines.map((line) => `[${stream}] ${line}`));
+  if (backendRecentLogs.length > 40) {
+    backendRecentLogs = backendRecentLogs.slice(-40);
+  }
+}
 
 function ensureBackendModelCompatPath() {
   if (!app.isPackaged) return;
@@ -81,18 +94,43 @@ function startBackend() {
   const isProd = app.isPackaged;
   backendStartError = null;
   backendExitInfo = null;
+  backendRecentLogs = [];
+  const exportRoot = isProd
+    ? path.join(app.getPath("documents"), "AI Meeting Assistant")
+    : path.resolve(__dirname, "..");
   if (isProd) {
     const backendName = process.platform === "win32" ? "ai_meeting_backend.exe" : "ai_meeting_backend";
     const backendPath = path.join(process.resourcesPath, "backend", backendName);
-    backendProcess = spawn(backendPath, [], { stdio: "inherit" });
+    backendProcess = spawn(backendPath, [], {
+      cwd: path.dirname(backendPath),
+      env: {
+        ...process.env,
+        PORT: String(BACKEND_PORT),
+        AMA_EXPORT_ROOT: exportRoot,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
   } else {
     // Dev: use system python to run app.py
     const projectRoot = path.resolve(__dirname, "..");
     backendProcess = spawn("python3", ["app.py"], {
       cwd: projectRoot,
-      env: { ...process.env, PORT: String(BACKEND_PORT) },
+      env: {
+        ...process.env,
+        PORT: String(BACKEND_PORT),
+        AMA_EXPORT_ROOT: exportRoot,
+      },
       stdio: "inherit",
     });
+  }
+
+  if (isProd && backendProcess.stdout) {
+    backendProcess.stdout.on("data", (chunk) => appendBackendLog("stdout", chunk));
+  }
+
+  if (isProd && backendProcess.stderr) {
+    backendProcess.stderr.on("data", (chunk) => appendBackendLog("stderr", chunk));
   }
 
   backendProcess.on("error", (err) => {
@@ -201,6 +239,9 @@ async function createWindow() {
       detail += `\n\n啟動錯誤: ${backendStartError}`;
     } else if (backendExitInfo && (backendExitInfo.code !== null || backendExitInfo.signal)) {
       detail += `\n\n後端已結束（code=${backendExitInfo.code}, signal=${backendExitInfo.signal || "none"}）。`;
+    }
+    if (backendRecentLogs.length) {
+      detail += `\n\n最近後端輸出:\n${backendRecentLogs.slice(-8).join("\n")}`;
     }
     dialog.showErrorBox("後端啟動失敗", detail);
   }
