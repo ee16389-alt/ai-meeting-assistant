@@ -201,7 +201,7 @@ jobs:
                 $req.Method = "GET"
                 $req.Timeout = 2000
                 $req.ReadWriteTimeout = 2000
-                $resp = $req.GetResponse()
+                $resp = [System.Net.HttpWebResponse]$req.GetResponse()
                 $statusCode = [int]$resp.StatusCode
                 $resp.Close()
                 if ($statusCode -eq 200) {
@@ -211,6 +211,7 @@ jobs:
                 }
                 Write-Host "Health check HTTP status: $statusCode"
               } catch {
+                Write-Host "Health check exception: $($_.Exception.Message)"
                 if ($proc.HasExited) {
                   if (Test-Path $stdoutLog) {
                     Write-Host "backend stdout:"
