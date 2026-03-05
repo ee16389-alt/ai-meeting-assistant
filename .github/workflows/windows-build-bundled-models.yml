@@ -197,8 +197,13 @@ jobs:
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 1000
               try {
-                $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2
+                $req = [System.Net.HttpWebRequest]::Create("http://127.0.0.1:8000/health")
+                $req.Method = "GET"
+                $req.Timeout = 2000
+                $req.ReadWriteTimeout = 2000
+                $resp = $req.GetResponse()
                 $statusCode = [int]$resp.StatusCode
+                $resp.Close()
                 if ($statusCode -eq 200) {
                   Write-Host "Backend health check passed."
                   $ready = $true
