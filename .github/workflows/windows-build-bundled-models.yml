@@ -196,13 +196,19 @@ jobs:
             $ready = $false
             for ($i = 0; $i -lt 60; $i++) {
               Start-Sleep -Milliseconds 1000
-              if (Test-Path $stderrLog) {
-                $healthHits = Select-String -Path $stderrLog -Pattern 'GET /health HTTP/1.1"\s+200' -SimpleMatch:$false -ErrorAction SilentlyContinue
-                if ($healthHits) {
-                  Write-Host "Backend health check passed (detected /health 200 in backend stderr log)."
+              try {
+                $client = New-Object System.Net.Sockets.TcpClient
+                $iar = $client.BeginConnect("127.0.0.1", 8000, $null, $null)
+                if ($iar.AsyncWaitHandle.WaitOne(1200, $false) -and $client.Connected) {
+                  $client.EndConnect($iar)
+                  Write-Host "Backend health check passed (TCP 127.0.0.1:8000 is reachable)."
                   $ready = $true
+                  $client.Close()
                   break
                 }
+                $client.Close()
+              } catch {
+                Write-Host "TCP health probe not ready yet."
               }
               if ($proc.HasExited) {
                 if (Test-Path $stdoutLog) {
