@@ -198,11 +198,13 @@ jobs:
               Start-Sleep -Milliseconds 1000
               try {
                 $resp = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 2
-                if ($resp.StatusCode -eq 200) {
+                $statusCode = [int]$resp.StatusCode
+                if ($statusCode -eq 200) {
                   Write-Host "Backend health check passed."
                   $ready = $true
                   break
                 }
+                Write-Host "Health check HTTP status: $statusCode"
               } catch {
                 if ($proc.HasExited) {
                   if (Test-Path $stdoutLog) {
