@@ -15,6 +15,22 @@ try:
 except Exception as _sherpa_import_error:
     sherpa_onnx = None  # type: ignore[assignment]
 
+try:
+    import opencc  # type: ignore
+    _s2twp = opencc.OpenCC("s2twp")  # 簡體 → 繁體（台灣習慣用字）
+except Exception:
+    _s2twp = None
+
+
+def _to_traditional(text: str) -> str:
+    """將簡體中文轉換為繁體中文（台灣用字）；若 opencc 不可用則原文回傳。"""
+    if _s2twp is None:
+        return text
+    try:
+        return _s2twp.convert(text)
+    except Exception:
+        return text
+
 
 class State(Enum):
     IDLE = "idle"
@@ -323,7 +339,7 @@ class STTEngine:
             return []
 
     def _make_segment(self, text: str) -> dict | None:
-        text = text.strip()
+        text = _to_traditional(text.strip())
         if not text:
             return None
 

@@ -6,3 +6,4 @@ numpy
 pydub
 audioop-lts; python_version >= "3.13"
 llama-cpp-python
+opencc-python-reimplemented

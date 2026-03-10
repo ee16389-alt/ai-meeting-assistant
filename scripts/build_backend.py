@@ -29,6 +29,7 @@ def main():
         "--add-data", f"templates{data_sep}templates",
         "--add-data", f"static{data_sep}static",
         "--collect-all", "llama_cpp",
+        "--collect-all", "opencc",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "simple_websocket",
         "--hidden-import", "llama_cpp",
