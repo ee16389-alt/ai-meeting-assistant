@@ -60,6 +60,23 @@ function hasBundledModels() {
   }
 }
 
+function cleanStaleModels() {
+  const cfg = loadModelPackConfig();
+  if (!cfg.ggufFilename) return;
+  const ggufDir = path.join(modelsBaseDir(), "llm");
+  if (!fs.existsSync(ggufDir)) return;
+  try {
+    for (const file of fs.readdirSync(ggufDir)) {
+      if (file.toLowerCase().endsWith(".gguf") && file !== cfg.ggufFilename) {
+        fs.unlinkSync(path.join(ggufDir, file));
+        console.log(`[models] 刪除舊模型: ${file}`);
+      }
+    }
+  } catch (e) {
+    console.warn("[models] 清理舊模型失敗:", e.message);
+  }
+}
+
 function hasDownloadedModels() {
   const cfg = loadModelPackConfig();
   const base = modelsBaseDir();
@@ -256,6 +273,10 @@ function waitForServer(timeoutMs = 90000) {
           try {
             const json = JSON.parse(body);
             if (json.ok && json.models_ready) { resolve(); return; }
+            if (json.ok && json.stt_error) {
+              reject(new Error(`STT 初始化失敗：${json.stt_error}`));
+              return;
+            }
           } catch (_) {}
           retry();
         });
@@ -352,6 +373,8 @@ async function createWindow() {
     process.env.AMA_DISABLE_OLLAMA_FALLBACK = "1";
     ensureBackendModelCompatPath();
   } else {
+    // 清理版本不符的舊 GGUF，確保重新下載正確版本
+    cleanStaleModels();
     // 首次下載 or 已下載過
     if (!hasDownloadedModels()) {
       const progressWin = createProgressWindow();
