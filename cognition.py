@@ -716,15 +716,13 @@ def summarize_full(text: str) -> str:
 
 
 def summarize_key_points(text: str) -> str:
-    """重點條列摘要（數量依逐字稿行數動態決定，最多 100 點）"""
-    line_count = len([l for l in text.splitlines() if l.strip()])
-    n_points = max(3, min(100, line_count))
+    """重點條列摘要（數量由模型依內容自行決定，最多 100 點）"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
         "必須用自己的語言重新整合與表達，絕對禁止逐句照抄逐字稿原文。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        f"以條列式呈現，每個重點用「•」開頭，根據內容豐富度列出約 {n_points} 點。"
+        "以條列式呈現，每個重點用「•」開頭，根據內容多寡自行決定數量，不強制固定點數，最多不超過 100 點。"
         "每個重點應為完整的觀念或結論，而非單一句子片段。"
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS

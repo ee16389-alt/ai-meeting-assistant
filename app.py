@@ -458,11 +458,11 @@ def _generate_summary(mode: str, full_text: str):
             "請輸出 2-4 句話的精簡摘要，整理主要脈絡、重點與結論。"
         )
     elif mode == "key_points":
-        line_count = len([l for l in full_text.splitlines() if l.strip()])
-        n_points = max(3, min(100, line_count))
         system_prompt = (
             "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
-            f"以條列式呈現，每個重點用「•」開頭，根據內容豐富度列出約 {n_points} 點。"
+            "以條列式呈現，每個重點用「•」開頭。\n"
+            "根據內容多寡自行決定重點數量：內容豐富可列出更多點，內容簡短則少列，不強制固定數量。\n"
+            "每個重點應為完整的觀念或結論，最多不超過 100 點。"
         )
     elif mode == "action_items":
         system_prompt = (
