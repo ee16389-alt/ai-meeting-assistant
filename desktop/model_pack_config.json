@@ -2,7 +2,7 @@
   "versionLabel": "qwen2.5-3b-q4_k_m",
   "ggufFilename": "qwen2.5-3b-instruct-q4_k_m.gguf",
   "ggufDownloadUrl": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-  "sherpaModelDirName": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-  "sherpaZipDownloadUrl": "https://drive.usercontent.google.com/download?id=1qOtmYCb67_mq803TBaD1wSkjBpMBtU8A&export=download&authuser=0&confirm=t",
+  "whisperModelDirName": "faster-whisper-medium",
+  "whisperZipDownloadUrl": "",
   "installerFilename": "AI-Meeting-Assistant-Model-Pack-qwen2.5-3b-q4_k_m-Setup.exe"
 }

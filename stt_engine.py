@@ -1,31 +1,32 @@
-"""感知層 - sherpa-onnx STT 引擎（僅使用 bundled 模型）"""
+"""感知層 - Faster-Whisper STT 引擎（medium int8，台灣腔中英混切）"""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 from enum import Enum
 from pathlib import Path
 
 import numpy as np
-_sherpa_import_error: str = ""
+
 try:
-    import sherpa_onnx  # type: ignore
+    from faster_whisper import WhisperModel  # type: ignore
+    _fw_import_error = ""
 except Exception as _e:
-    sherpa_onnx = None  # type: ignore[assignment]
-    _sherpa_import_error = str(_e)
+    WhisperModel = None  # type: ignore[assignment]
+    _fw_import_error = str(_e)
 
 try:
     import opencc  # type: ignore
-    _s2twp = opencc.OpenCC("s2twp")  # 簡體 → 繁體（台灣習慣用字）
+    _s2twp = opencc.OpenCC("s2twp")
 except Exception:
     _s2twp = None
 
 
 def _to_traditional(text: str) -> str:
-    """將簡體中文轉換為繁體中文（台灣用字）；若 opencc 不可用則原文回傳。"""
     if _s2twp is None:
         return text
     try:
@@ -41,8 +42,17 @@ class State(Enum):
     STOPPED = "stopped"
 
 
-# 說話者間隔門檻（秒）：語音段落間隙超過此值視為換人說話
 SPEAKER_GAP_THRESHOLD = 1.5
+
+# Whisper 初始提示：引導輸出繁體中文台灣用字，適應中英混切
+TAIWAN_PROMPT = "以下是台灣繁體中文會議紀錄，包含商業術語與英文詞彙。"
+
+# Whisper 常見幻覺句（靜音時模型虛構的輸出）
+_HALLUCINATION_PATTERNS = re.compile(
+    r"(thank you for watching|字幕由|請訂閱|掌聲|♪|♫|music|ambient|"
+    r"by\s+\w+\s+caption|subtitles?\s+by)",
+    re.IGNORECASE,
+)
 
 
 def _is_frozen() -> bool:
@@ -69,7 +79,6 @@ def _load_model_pack_config() -> dict:
     if resources:
         candidates.append(resources / "model_pack_config.json")
     candidates.append(_project_root() / "desktop" / "model_pack_config.json")
-
     for p in candidates:
         try:
             if p.exists():
@@ -79,107 +88,101 @@ def _load_model_pack_config() -> dict:
     return {}
 
 
-def _find_bundled_sherpa_dir() -> Path:
-    # 優先使用環境變數指定路徑（首次下載後由 Electron 設定）
-    env_dir = os.environ.get("AMA_SHERPA_DIR", "").strip()
+def _find_whisper_model_dir() -> Path | None:
+    """尋找本地 Faster-Whisper 模型目錄（含 model.bin）"""
+    env_dir = os.environ.get("AMA_WHISPER_DIR", "").strip()
     if env_dir:
         p = Path(env_dir).expanduser()
-        if p.is_dir() and (p / "tokens.txt").exists():
+        if p.is_dir() and (p / "model.bin").exists():
             return p
-        # 可能指向父目錄，往下找一層
-        if p.is_dir():
-            nested = sorted([d for d in p.iterdir() if d.is_dir() and (d / "tokens.txt").exists()])
-            if nested:
-                return nested[0]
 
     cfg = _load_model_pack_config()
-    configured_name = str(cfg.get("sherpaModelDirName", "")).strip()
+    model_dir_name = str(cfg.get("whisperModelDirName", "faster-whisper-medium")).strip()
 
     candidates: list[Path] = []
     resources = _resources_root()
     if resources:
-        base = resources / "models" / "sherpa-onnx"
-        if configured_name:
-            candidates.append(base / configured_name)
-        candidates.append(base)
+        candidates.append(resources / "models" / "whisper" / model_dir_name)
+        candidates.append(resources / "models" / "whisper")
 
     root = _project_root()
-    for base in (root / "desktop" / "models" / "sherpa-onnx", root / "models" / "sherpa-onnx"):
-        if configured_name:
-            candidates.append(base / configured_name)
+    for base in (
+        root / "desktop" / "models" / "whisper",
+        root / "models" / "whisper",
+    ):
+        candidates.append(base / model_dir_name)
         candidates.append(base)
 
-    # PyInstaller in Electron may run from .../Resources/backend/_internal.
-    # Walk up from both __file__ and sys.executable to find the actual bundled models dir.
     probe_roots = [Path(__file__).resolve().parent]
     try:
         probe_roots.append(Path(sys.executable).resolve().parent)
     except Exception:
         pass
-    seen = set()
+    seen: set[str] = set()
     for probe in probe_roots:
         for anc in [probe, *probe.parents]:
             key = str(anc)
             if key in seen:
                 continue
             seen.add(key)
-            base = anc / "models" / "sherpa-onnx"
-            if configured_name:
-                candidates.append(base / configured_name)
+            base = anc / "models" / "whisper"
+            candidates.append(base / model_dir_name)
             candidates.append(base)
 
     for p in candidates:
         if not p.exists():
             continue
-        if p.is_dir() and (p / "tokens.txt").exists():
+        if p.is_dir() and (p / "model.bin").exists():
             return p
         if p.is_dir():
             nested = sorted(
-                [d for d in p.iterdir() if d.is_dir() and (d / "tokens.txt").exists()],
-                key=lambda x: x.name,
+                [d for d in p.iterdir() if d.is_dir() and (d / "model.bin").exists()]
             )
             if nested:
-                if configured_name:
-                    for d in nested:
-                        if d.name == configured_name:
-                            return d
                 return nested[0]
-    raise FileNotFoundError("找不到 bundled sherpa-onnx 模型目錄")
-
-
-def _pick_model_file(model_dir: Path, prefix: str) -> Path:
-    # Prefer int8 models for CPU packaging.
-    patterns = [f"{prefix}*.int8.onnx", f"{prefix}*.onnx"]
-    for pattern in patterns:
-        files = sorted(model_dir.glob(pattern))
-        if files:
-            return files[0]
-    raise FileNotFoundError(f"找不到 {prefix}*.onnx ({model_dir})")
+    return None
 
 
 class STTEngine:
-    TRANSCRIBE_INTERVAL_MS = 800
+    TRANSCRIBE_INTERVAL_MS = 5000   # 每 5 秒批次辨識
     SAMPLE_RATE = 16000
+    SILENCE_THRESHOLD = 0.003
 
-    def __init__(self, model_size="small"):
-        del model_size  # API compatibility only; sherpa-onnx ignores this.
-        if sherpa_onnx is None:
-            raise RuntimeError(f"sherpa_onnx 無法載入: {_sherpa_import_error}")
+    def __init__(self, model_size: str = "medium"):
+        if WhisperModel is None:
+            raise RuntimeError(f"faster_whisper 無法載入: {_fw_import_error}")
 
         self._lock = threading.Lock()
         self._state = State.IDLE
         self._pcm_buffer = np.array([], dtype=np.float32)
         self._time_offset_sec = 0.0
-        self._speaker_counter = 0
         self._current_speaker = 1
         self._last_segment_end = 0.0
-
-        self._recognizer = self._create_recognizer()
-        self._stream = self._recognizer.create_stream()
         self._last_partial_text = ""
         self._last_audio_rms = 0.0
 
-        print("[STT] sherpa-onnx 模型載入完成", flush=True)
+        self._model = self._create_model(model_size)
+        print("[STT] Faster-Whisper 模型載入完成", flush=True)
+
+    def _create_model(self, model_size: str) -> "WhisperModel":
+        local_dir = _find_whisper_model_dir()
+        if local_dir:
+            print(f"[STT] 使用本地模型: {local_dir}", flush=True)
+            model_path = str(local_dir)
+        else:
+            # 開發模式：自動從 HuggingFace 下載（由 HF_HOME 控制快取位置）
+            model_path = f"Systran/faster-whisper-{model_size}"
+            print(f"[STT] 本地模型未找到，下載 {model_path}", flush=True)
+
+        return WhisperModel(
+            model_path,
+            device="cpu",
+            compute_type="int8",
+            num_workers=1,
+            cpu_threads=max(2, (os.cpu_count() or 4) - 1),
+        )
+
+    # ── 屬性 ──────────────────────────────────────────────
 
     @property
     def state(self) -> str:
@@ -196,18 +199,18 @@ class STTEngine:
         with self._lock:
             return self._last_audio_rms
 
+    # ── 控制 ──────────────────────────────────────────────
+
     def start(self) -> str:
         with self._lock:
             if self._state != State.IDLE:
                 return self._state.value
             self._pcm_buffer = np.array([], dtype=np.float32)
             self._time_offset_sec = 0.0
-            self._speaker_counter = 0
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
-            self._stream = self._recognizer.create_stream()
             self._state = State.RECORDING
             return self._state.value
 
@@ -225,74 +228,61 @@ class STTEngine:
             self._state = State.RECORDING
             return self._state.value
 
-    def stop(self) -> tuple[str, list[dict]]:
-        """停止錄音並執行最終轉寫，回傳 (state, segments)"""
+    def request_stop(self) -> np.ndarray:
+        """原子操作：立即設為 IDLE 並取走剩餘 buffer，供非同步最終轉寫。"""
         with self._lock:
             if self._state not in (State.RECORDING, State.PAUSED):
-                return self._state.value, []
-            self._state = State.STOPPED
-            segments = self._transcribe_remaining(finalize=True)
+                return np.array([], dtype=np.float32)
+            remaining = self._pcm_buffer.copy()
+            self._pcm_buffer = np.array([], dtype=np.float32)
             self._state = State.IDLE
-            return "stopped", segments
+            return remaining
+
+    def stop(self) -> tuple[str, list[dict]]:
+        """同步停止（相容舊介面）。"""
+        remaining = self.request_stop()
+        segments = self.transcribe_audio(remaining)
+        return "stopped", segments
 
     def reset(self):
         with self._lock:
             self._pcm_buffer = np.array([], dtype=np.float32)
             self._time_offset_sec = 0.0
-            self._speaker_counter = 0
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
-            self._stream = self._recognizer.create_stream()
             self._state = State.IDLE
 
+    # ── 音頻處理 ──────────────────────────────────────────
+
     def feed_audio(self, chunk: bytes) -> list[dict]:
-        """接收 16kHz PCM int16 chunk，累積後觸發轉寫。回傳轉寫結果列表。"""
         with self._lock:
             if self._state != State.RECORDING:
                 return []
-
             self._append_pcm_chunk(chunk)
-            total_duration_ms = self._get_buffer_duration_ms()
-            if total_duration_ms < self.TRANSCRIBE_INTERVAL_MS:
+            duration_ms = self._get_buffer_duration_ms()
+            if duration_ms < self.TRANSCRIBE_INTERVAL_MS:
+                self._last_partial_text = "辨識中..."
                 return []
-            return self._do_transcribe()
+            audio = self._pcm_buffer.copy()
+            self._pcm_buffer = np.array([], dtype=np.float32)
+            self._last_partial_text = ""
 
-    def _create_recognizer(self):
-        model_dir = _find_bundled_sherpa_dir()
-        tokens = model_dir / "tokens.txt"
-        encoder = _pick_model_file(model_dir, "encoder")
-        decoder = _pick_model_file(model_dir, "decoder")
-        joiner = _pick_model_file(model_dir, "joiner")
+        # 鎖外執行推論，不阻塞其他 feed_audio
+        return self._do_transcribe(audio)
 
-        print(f"[STT] 使用 bundled sherpa-onnx: {model_dir}", flush=True)
-        print(
-            f"[STT] encoder={encoder.name}, decoder={decoder.name}, joiner={joiner.name}",
-            flush=True,
-        )
-
-        return sherpa_onnx.OnlineRecognizer.from_transducer(
-            tokens=str(tokens),
-            encoder=str(encoder),
-            decoder=str(decoder),
-            joiner=str(joiner),
-            num_threads=max(1, (os.cpu_count() or 4) - 1),
-            sample_rate=self.SAMPLE_RATE,
-            provider="cpu",
-            decoding_method="greedy_search",
-            enable_endpoint_detection=True,
-            rule1_min_trailing_silence=1.2,
-            rule2_min_trailing_silence=0.8,
-            rule3_min_utterance_length=20.0,
-        )
-
-    def _get_buffer_duration_ms(self) -> int:
-        if self._pcm_buffer.size == 0:
-            return 0
-        return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
-
-    SILENCE_THRESHOLD = 0.003  # 恢復較低門檻，避免漏字
+    def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
+        """對外部傳入的 buffer 進行轉寫（供非同步 stop 使用）。"""
+        if audio.size == 0:
+            return []
+        # 裁剪尾端靜音
+        nz = np.nonzero(audio)[0]
+        if nz.size == 0:
+            return []
+        keep = min(int(nz[-1]) + self.SAMPLE_RATE // 2, audio.size)
+        audio = audio[:keep]
+        return self._do_transcribe(audio)
 
     def _append_pcm_chunk(self, chunk: bytes) -> None:
         try:
@@ -300,111 +290,77 @@ class STTEngine:
             if pcm16.size == 0:
                 return
             pcm32 = pcm16.astype(np.float32) / 32768.0
-            
-            # 計算音量 (RMS)
             rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
             self._last_audio_rms = rms
-            
-            # 靜音過濾：以零值音頻替換噪音，維持串流連續性並避免幻覺
             if rms < self.SILENCE_THRESHOLD:
-                self._pcm_buffer = np.concatenate([self._pcm_buffer, np.zeros(pcm32.size, dtype=np.float32)])
+                self._pcm_buffer = np.concatenate(
+                    [self._pcm_buffer, np.zeros(pcm32.size, dtype=np.float32)]
+                )
                 return
-
             self._pcm_buffer = np.concatenate([self._pcm_buffer, pcm32])
         except Exception as e:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)
 
-    def _do_transcribe(self) -> list[dict]:
-        return self._decode_buffer(finalize=False)
+    def _get_buffer_duration_ms(self) -> int:
+        if self._pcm_buffer.size == 0:
+            return 0
+        return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
 
-    def _transcribe_remaining(self, finalize: bool = False) -> list[dict]:
-        if finalize and self._pcm_buffer.size > 0:
-            # 裁剪尾端靜音（零值），避免最終解碼等待大量無聲音頻
-            nz = np.nonzero(self._pcm_buffer)[0]
-            if nz.size > 0:
-                keep = min(int(nz[-1]) + self.SAMPLE_RATE // 2, self._pcm_buffer.size)
-                self._pcm_buffer = self._pcm_buffer[:keep]
-            else:
-                self._pcm_buffer = np.array([], dtype=np.float32)
-        if self._pcm_buffer.size == 0 and not finalize:
-            return []
-        return self._decode_buffer(finalize=finalize)
-
-    def _decode_buffer(self, finalize: bool) -> list[dict]:
+    def _do_transcribe(self, audio: np.ndarray) -> list[dict]:
         try:
-            if self._pcm_buffer.size > 0:
-                self._stream.accept_waveform(self.SAMPLE_RATE, self._pcm_buffer)
-                self._time_offset_sec += self._pcm_buffer.size / self.SAMPLE_RATE
-                self._pcm_buffer = np.array([], dtype=np.float32)
-
-            while self._recognizer.is_ready(self._stream):
-                self._recognizer.decode_stream(self._stream)
-
-            if finalize:
-                try:
-                    self._stream.input_finished()
-                except Exception:
-                    pass
-                while self._recognizer.is_ready(self._stream):
-                    self._recognizer.decode_stream(self._stream)
+            segments_iter, info = self._model.transcribe(
+                audio,
+                language="zh",
+                beam_size=5,
+                best_of=5,
+                temperature=0.0,
+                initial_prompt=TAIWAN_PROMPT,
+                vad_filter=True,
+                vad_parameters=dict(
+                    min_silence_duration_ms=400,
+                    speech_pad_ms=200,
+                    threshold=0.5,
+                ),
+                condition_on_previous_text=True,
+                word_timestamps=False,
+            )
 
             results = []
-            current_text = self._recognizer.get_result(self._stream).strip()
-            should_emit = False
+            for seg in segments_iter:
+                text = seg.text.strip()
+                if not text or _HALLUCINATION_PATTERNS.search(text):
+                    continue
+                text = _to_traditional(text)
+                text = self._filter_repetitions(text)
+                if not text:
+                    continue
 
-            if finalize:
-                should_emit = bool(current_text)
-            elif self._recognizer.is_endpoint(self._stream) and current_text:
-                should_emit = True
+                start = self._time_offset_sec + seg.start
+                end = self._time_offset_sec + seg.end
+                gap = start - self._last_segment_end
+                if self._last_segment_end > 0 and gap > SPEAKER_GAP_THRESHOLD:
+                    self._current_speaker += 1
+                self._last_segment_end = max(self._last_segment_end, end)
 
-            if should_emit:
-                seg = self._make_segment(current_text)
-                if seg:
-                    results.append(seg)
-                self._last_partial_text = ""
-                self._recognizer.reset(self._stream)
-            else:
-                self._last_partial_text = current_text
+                results.append({
+                    "text": text,
+                    "start": start,
+                    "end": end,
+                    "language": getattr(info, "language", "zh"),
+                    "speaker": self._current_speaker,
+                })
 
+            self._time_offset_sec += audio.size / self.SAMPLE_RATE
             return results
+
         except Exception as e:
-            print(f"[STT] sherpa-onnx 轉寫錯誤: {e}", flush=True)
+            print(f"[STT] Faster-Whisper 辨識錯誤: {e}", flush=True)
+            self._time_offset_sec += audio.size / self.SAMPLE_RATE
             return []
 
-    def _make_segment(self, text: str) -> dict | None:
-        # 重複字詞過濾：單字符 3+ 次重複、詞語 3+ 次重複
+    @staticmethod
+    def _filter_repetitions(text: str) -> str:
         if len(text) > 3:
-            import re
             text = re.sub(r'(.)\1{2,}', r'\1\1', text)           # 嗯嗯嗯嗯 → 嗯嗯
             text = re.sub(r'(.{2,8})\1{2,}', r'\1', text)        # 然後然後然後 → 然後
-
-        text = _to_traditional(text.strip())
-        if not text:
-            return None
-
-        start = max(0.0, self._time_offset_sec)
-        end = max(start, self._time_offset_sec)
-        try:
-            start = float(self._recognizer.start_time(self._stream))
-            timestamps = self._recognizer.timestamps(self._stream)
-            if timestamps:
-                end = start + float(timestamps[-1])
-            else:
-                end = max(start, self._time_offset_sec)
-        except Exception:
-            # If timestamps are unavailable, keep coarse timing only.
-            start = max(0.0, self._last_segment_end)
-            end = max(start, self._time_offset_sec)
-
-        gap = start - self._last_segment_end
-        if self._last_segment_end > 0 and gap > SPEAKER_GAP_THRESHOLD:
-            self._current_speaker += 1
-        self._last_segment_end = max(self._last_segment_end, end)
-
-        return {
-            "text": text,
-            "start": start,
-            "end": end,
-            "language": "zh",
-            "speaker": self._current_speaker,
-        }
+        return text.strip()

@@ -5,6 +5,8 @@ import sys
 import threading
 import time
 
+import numpy as np
+
 
 def _configure_console_encoding() -> None:
     for stream_name in ("stdout", "stderr"):
@@ -61,6 +63,9 @@ class _UnavailableSTT:
     def resume(self) -> str:
         return "error"
 
+    def request_stop(self) -> np.ndarray:
+        return np.array([], dtype=np.float32)
+
     def stop(self) -> tuple[str, list[dict]]:
         return "error", []
 
@@ -75,7 +80,7 @@ class _UnavailableSTT:
 # 全域 STT 引擎實例（初始化失敗時不讓整個 Flask 進程退出）
 _stt_init_error = ""
 try:
-    stt = STTEngine(model_size="small")
+    stt = STTEngine(model_size="medium")
 except Exception as e:
     _stt_init_error = str(e)
     print(f"[STT] 初始化失敗，後端將以降級模式啟動: {_stt_init_error}", flush=True)
@@ -105,8 +110,9 @@ def _export_root_dir() -> str:
     return os.path.join(home, "ai-meeting-assistant")
 
 
-def _meeting_output_dir(meeting_name: str) -> str:
-    safe_name = (meeting_name or "").strip() or current_meeting_name or time.strftime("meeting_%Y%m%d_%H%M%S")
+def _meeting_output_dir(meeting_name: str = "") -> str:
+    # 優先使用錄音時設定的名稱，確保匯出與錄音音檔在同一資料夾
+    safe_name = current_meeting_name or (meeting_name or "").strip() or time.strftime("meeting_%Y%m%d_%H%M%S")
     return os.path.join(_export_root_dir(), "download", safe_name)
 
 
@@ -320,26 +326,12 @@ def handle_stop():
         emit("state_changed", {"state": "error"})
         return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
     handle_audio_recording_done()
-    state, final_segments = stt.stop()
+    # 原子操作：立即設為 IDLE 並取走剩餘 buffer，UI 立即響應
+    remaining = stt.request_stop()
     socketio.emit("transcript_partial_clear")
-    for seg in final_segments:
-        with _transcript_lock:
-            line = {
-                "index": len(transcript_lines),
-                "text": seg["text"],
-                "timestamp": time.strftime("%H:%M:%S"),
-                "language": seg.get("language", ""),
-            }
-            transcript_lines.append(line)
-        socketio.emit("transcript_update", line)
-
-        idx = line["index"]
-        original_text = line["text"]
-        socketio.start_background_task(
-            _proofread_line, idx, original_text
-        )
-
     socketio.emit("state_changed", {"state": "idle"})
+    # 非同步處理剩餘音頻，不阻塞回應
+    socketio.start_background_task(_finish_transcription, remaining)
     return {"ok": True, "state": "idle"}
 
 
@@ -422,6 +414,24 @@ def _proofread_line(index: int, original_text: str):
             "original": original_text,
             "proofread": proofread,
         })
+
+
+def _finish_transcription(remaining: np.ndarray):
+    """背景完成停止後剩餘音頻的轉寫"""
+    if remaining is None or remaining.size == 0:
+        return
+    final_segments = stt.transcribe_audio(remaining)
+    for seg in final_segments:
+        with _transcript_lock:
+            line = {
+                "index": len(transcript_lines),
+                "text": seg["text"],
+                "timestamp": time.strftime("%H:%M:%S"),
+                "language": seg.get("language", ""),
+            }
+            transcript_lines.append(line)
+        socketio.emit("transcript_update", line)
+        socketio.start_background_task(_proofread_line, line["index"], line["text"])
 
 
 def _generate_summary(mode: str, full_text: str):

@@ -54,12 +54,12 @@ function modelsBaseDir() {
 function hasBundledModels() {
   if (!app.isPackaged) return false;
   const ggufDir = path.join(process.resourcesPath, "models", "llm");
-  const sherpaDir = path.join(process.resourcesPath, "models", "sherpa-onnx");
+  const whisperDir = path.join(process.resourcesPath, "models", "whisper");
   try {
     const hasGguf =
       fs.existsSync(ggufDir) &&
       fs.readdirSync(ggufDir).some((n) => n.toLowerCase().endsWith(".gguf"));
-    return hasGguf && fs.existsSync(sherpaDir);
+    return hasGguf && fs.existsSync(whisperDir);
   } catch (_) {
     return false;
   }
@@ -86,13 +86,12 @@ function hasDownloadedModels() {
   const cfg = loadModelPackConfig();
   const base = modelsBaseDir();
   const ggufPath = path.join(base, "llm", cfg.ggufFilename || "");
-  const sherpaDir = path.join(base, "sherpa-onnx", cfg.sherpaModelDirName || "");
+  const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
+  const whisperDir = path.join(base, "whisper", whisperDirName);
   return (
     cfg.ggufFilename &&
     fs.existsSync(ggufPath) &&
-    cfg.sherpaModelDirName &&
-    fs.existsSync(sherpaDir) &&
-    fs.existsSync(path.join(sherpaDir, "tokens.txt"))
+    fs.existsSync(path.join(whisperDir, "model.bin"))
   );
 }
 
@@ -178,41 +177,15 @@ function extractZip(zipPath, destDir) {
   });
 }
 
-function findSherpaModelDir(sherpaBase, expectedName) {
-  // Try exact match first
-  const exact = path.join(sherpaBase, expectedName);
-  if (fs.existsSync(exact) && fs.existsSync(path.join(exact, "tokens.txt"))) return exact;
-
-  // Walk up to 2 levels to find the dir with tokens.txt
-  const search = (dir, depth) => {
-    if (depth < 0) return null;
-    try {
-      for (const entry of fs.readdirSync(dir)) {
-        const full = path.join(dir, entry);
-        if (fs.statSync(full).isDirectory()) {
-          if (entry === expectedName && fs.existsSync(path.join(full, "tokens.txt"))) return full;
-          if (fs.existsSync(path.join(full, "tokens.txt"))) return full;
-          const nested = search(full, depth - 1);
-          if (nested) return nested;
-        }
-      }
-    } catch (_) {}
-    return null;
-  };
-  return search(sherpaBase, 2);
-}
-
 async function ensureModels(sendProgress) {
   const cfg = loadModelPackConfig();
-  if (!cfg.ggufFilename || !cfg.ggufDownloadUrl || !cfg.sherpaModelDirName || !cfg.sherpaZipDownloadUrl) {
-    throw new Error("model_pack_config.json 缺少必要欄位");
+  if (!cfg.ggufFilename || !cfg.ggufDownloadUrl) {
+    throw new Error("model_pack_config.json 缺少必要欄位 (gguf)");
   }
 
   const base = modelsBaseDir();
   const ggufDir = path.join(base, "llm");
-  const sherpaBase = path.join(base, "sherpa-onnx");
   const ggufPath = path.join(ggufDir, cfg.ggufFilename);
-  const sherpaFinal = path.join(sherpaBase, cfg.sherpaModelDirName);
 
   // ── 下載 GGUF ──────────────────────────────────────
   if (!fs.existsSync(ggufPath)) {
@@ -223,46 +196,63 @@ async function ensureModels(sendProgress) {
       const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
       sendProgress({
         stage: "gguf",
-        percent: percent >= 0 ? Math.floor(percent * 0.7) : -1,
+        percent: percent >= 0 ? Math.floor(percent * 0.6) : -1,
         text: `下載語言模型... ${mb} MB ${totalMb}`,
       });
     });
-    sendProgress({ stage: "gguf", percent: 70, text: "語言模型下載完成" });
+    sendProgress({ stage: "gguf", percent: 60, text: "語言模型下載完成" });
   } else {
-    sendProgress({ stage: "gguf", percent: 70, text: "語言模型已存在，跳過下載" });
+    sendProgress({ stage: "gguf", percent: 60, text: "語言模型已存在，跳過下載" });
   }
 
-  // ── 下載 sherpa-onnx ────────────────────────────────
-  if (!fs.existsSync(sherpaFinal) || !fs.existsSync(path.join(sherpaFinal, "tokens.txt"))) {
-    fs.mkdirSync(sherpaBase, { recursive: true });
-    const zipPath = path.join(base, "sherpa-onnx.zip");
-    sendProgress({ stage: "sherpa", percent: 70, text: "下載語音辨識模型..." });
-    await downloadFile(cfg.sherpaZipDownloadUrl, zipPath, ({ percent, downloaded, total }) => {
+  // ── 下載 Whisper 模型（如有提供 zip 網址）──────────
+  const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
+  const whisperBase = path.join(base, "whisper");
+  const whisperFinal = path.join(whisperBase, whisperDirName);
+  let whisperModelDir = null;
+
+  if (fs.existsSync(path.join(whisperFinal, "model.bin"))) {
+    whisperModelDir = whisperFinal;
+    sendProgress({ stage: "whisper", percent: 95, text: "語音辨識模型已存在，跳過下載" });
+  } else if (cfg.whisperZipDownloadUrl) {
+    fs.mkdirSync(whisperBase, { recursive: true });
+    const zipPath = path.join(base, "whisper.zip");
+    sendProgress({ stage: "whisper", percent: 60, text: "下載語音辨識模型 (Whisper)..." });
+    await downloadFile(cfg.whisperZipDownloadUrl, zipPath, ({ percent, downloaded, total }) => {
       const mb = (downloaded / 1024 / 1024).toFixed(0);
       const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
       sendProgress({
-        stage: "sherpa",
-        percent: percent >= 0 ? 70 + Math.floor(percent * 0.25) : -1,
+        stage: "whisper",
+        percent: percent >= 0 ? 60 + Math.floor(percent * 0.35) : -1,
         text: `下載語音辨識模型... ${mb} MB ${totalMb}`,
       });
     });
 
-    sendProgress({ stage: "sherpa", percent: 95, text: "解壓縮語音辨識模型..." });
-    await extractZip(zipPath, sherpaBase);
+    sendProgress({ stage: "whisper", percent: 95, text: "解壓縮語音辨識模型..." });
+    await extractZip(zipPath, whisperBase);
     try { fs.unlinkSync(zipPath); } catch (_) {}
 
-    // Normalize directory name
-    const found = findSherpaModelDir(sherpaBase, cfg.sherpaModelDirName);
-    if (found && found !== sherpaFinal) {
-      fs.renameSync(found, sherpaFinal);
+    // 尋找解壓後含 model.bin 的目錄並正規化名稱
+    if (!fs.existsSync(path.join(whisperFinal, "model.bin"))) {
+      try {
+        for (const entry of fs.readdirSync(whisperBase)) {
+          const full = path.join(whisperBase, entry);
+          if (fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, "model.bin"))) {
+            if (full !== whisperFinal) fs.renameSync(full, whisperFinal);
+            break;
+          }
+        }
+      } catch (_) {}
     }
-    if (!fs.existsSync(path.join(sherpaFinal, "tokens.txt"))) {
-      throw new Error("sherpa-onnx 模型解壓縮後結構異常，請重新嘗試。");
+    if (!fs.existsSync(path.join(whisperFinal, "model.bin"))) {
+      throw new Error("Whisper 模型解壓縮後結構異常，請重新嘗試。");
     }
+    whisperModelDir = whisperFinal;
   }
+  // 若無 zip URL，由 Python stt_engine 自行透過 HuggingFace 下載
 
   sendProgress({ stage: "done", percent: 100, text: "模型準備完成，正在啟動..." });
-  return { ggufPath, sherpaModelDir: sherpaFinal };
+  return { ggufPath, whisperModelDir };
 }
 
 // ── 後端啟動 ───────────────────────────────────────────
@@ -401,10 +391,11 @@ async function createWindow() {
       };
 
       try {
-        const { ggufPath, sherpaModelDir } = await ensureModels(send);
+        const { ggufPath, whisperModelDir } = await ensureModels(send);
         modelEnv = {
           AMA_GGUF_PATH: ggufPath,
-          AMA_SHERPA_DIR: sherpaModelDir,
+          HF_HOME: path.join(app.getPath("userData"), "hf_cache"),
+          ...(whisperModelDir ? { AMA_WHISPER_DIR: whisperModelDir } : {}),
         };
       } catch (err) {
         if (!progressWin.isDestroyed()) progressWin.close();
@@ -422,9 +413,12 @@ async function createWindow() {
       // 已下載過，直接讀路徑
       const cfg = loadModelPackConfig();
       const base = modelsBaseDir();
+      const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
+      const whisperDir = path.join(base, "whisper", whisperDirName);
       modelEnv = {
         AMA_GGUF_PATH: path.join(base, "llm", cfg.ggufFilename),
-        AMA_SHERPA_DIR: path.join(base, "sherpa-onnx", cfg.sherpaModelDirName),
+        HF_HOME: path.join(app.getPath("userData"), "hf_cache"),
+        ...(fs.existsSync(path.join(whisperDir, "model.bin")) ? { AMA_WHISPER_DIR: whisperDir } : {}),
       };
     }
   }
