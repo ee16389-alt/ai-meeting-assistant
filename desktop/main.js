@@ -5,6 +5,11 @@ const https = require("https");
 const http = require("http");
 const { spawn, execFile } = require("child_process");
 
+// 禁用 Chromium 內建的語音與翻譯功能，防止出現上方橫幅與權限衝突
+app.commandLine.appendSwitch("disable-speech-api");
+app.commandLine.appendSwitch("disable-speech-synthesis-api");
+app.commandLine.appendSwitch("disable-features", "Translate,LiveCaption");
+
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
