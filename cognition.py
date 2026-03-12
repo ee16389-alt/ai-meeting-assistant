@@ -20,7 +20,7 @@ except Exception as e:
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
-MODEL = "qwen2.5:1.5b"
+MODEL = "qwen2.5:3b"
 TEMPERATURE = 0.0
 
 _LOCAL_LLM = None
@@ -43,6 +43,9 @@ FORBIDDEN_SUMMARY_PATTERNS = (
     "A. ",
     "B. ",
     "---",
+    "資訊不足，僅供參考",
+    "（僅供參考）",
+    "逐字稿資訊不足",
 )
 
 FILLER_PHRASES = (
@@ -298,13 +301,22 @@ def _looks_like_correction_text(text: str) -> bool:
 
 
 def _extract_action_lines(lines: list[str]) -> list[str]:
+    # "要" is too common in Chinese; only count it when paired with other indicators
+    STRONG_ACTION_KEYWORDS = (
+        "需要", "請", "確認", "安排", "完成", "處理", "整理", "更新", "追蹤", "提交", "修正", "記得",
+    )
     actions = []
     for line in lines:
         if _looks_like_correction_text(line):
             continue
         if "待確認" in line or "下一步" in line or "補充背景" in line:
             continue
-        if any(k in line for k in ACTION_KEYWORDS):
+        stripped = line.strip()
+        is_action = any(k in stripped for k in STRONG_ACTION_KEYWORDS)
+        # "要" only qualifies when the line starts with an action prefix
+        if not is_action and "要" in stripped:
+            is_action = any(stripped.startswith(p) for p in CHINESE_ACTION_PREFIXES)
+        if is_action:
             actions.append(line)
     return actions
 
@@ -373,6 +385,9 @@ def _line_summary_score(text: str) -> int:
     return score
 
 
+_MIN_SUMMARY_SCORE = 5
+
+
 def _select_summary_lines(lines: list[str], limit: int) -> list[str]:
     indexed = []
     for idx, line in enumerate(lines):
@@ -381,7 +396,11 @@ def _select_summary_lines(lines: list[str], limit: int) -> list[str]:
             score -= 12
         indexed.append((score, len(line), idx, line))
     ranked = sorted(indexed, key=lambda item: (item[0], item[1]), reverse=True)
-    selected = {line for _, _, _, line in ranked[:limit]}
+    qualified = [item for item in ranked if item[0] >= _MIN_SUMMARY_SCORE]
+    # Fall back to all lines if none pass the threshold
+    if not qualified:
+        qualified = ranked
+    selected = {line for _, _, _, line in qualified[:limit]}
     return [line for line in lines if line in selected][:limit]
 
 
@@ -460,6 +479,16 @@ def _is_error_result(text: str) -> bool:
     return text.strip().startswith("[錯誤]")
 
 
+def _summary_is_near_duplicate(summary: str, transcript: str) -> bool:
+    """Returns True if the summary is mostly verbatim copies of transcript lines."""
+    s_lines = [l.strip() for l in summary.splitlines() if len(l.strip()) > 8]
+    t_lines = _meaningful_transcript_lines(transcript)
+    if not s_lines or not t_lines:
+        return False
+    matches = sum(1 for sl in s_lines if any(sl in tl or tl in sl for tl in t_lines))
+    return (matches / len(s_lines)) >= 0.7
+
+
 def _summary_has_out_of_transcript_text(summary: str, transcript: str) -> bool:
     if not summary.strip():
         return True
@@ -469,6 +498,8 @@ def _summary_has_out_of_transcript_text(summary: str, transcript: str) -> bool:
         if p in summary:
             return True
     if _looks_like_correction_text(summary):
+        return True
+    if _summary_is_near_duplicate(summary, transcript):
         return True
     return False
 
@@ -481,7 +512,7 @@ def _extractive_fallback(transcript: str, mode: str) -> str:
     if mode == "action_items":
         actions = _extract_action_lines(lines)
         if not actions:
-            return "逐字稿資訊不足"
+            return "無明確待辦事項"
         return "\n".join(f"- [ ] {line}" for line in actions[:5])
 
     if _looks_mostly_chinese("".join(lines)):
@@ -501,24 +532,31 @@ def _insufficient_info_fallback(transcript: str, mode: str) -> str:
     if not lines:
         return "逐字稿資訊不足"
 
-    note = "（逐字稿資訊不足，故此呈現）"
     chosen = _select_summary_lines(lines, 5)
+    compressed = [_compress_clause(l) for l in chosen if _compress_clause(l)]
 
     if mode == "full":
-        return note + "\n" + "\n".join(chosen[:3])
+        if not compressed:
+            return "逐字稿資訊不足"
+        if len(compressed) == 1:
+            return f"這段內容主要提到{compressed[0]}。"
+        return "這段內容主要提到" + "；".join(compressed[:-1]) + f"；並指出{compressed[-1]}。"
 
     if mode == "key_points":
-        inferred = _extract_action_lines(chosen)
-        base = inferred if inferred else chosen
-        return note + "\n" + "\n".join(f"• {line}" for line in base[:5])
+        base = compressed if compressed else [l for l in chosen if l]
+        if not base:
+            return "逐字稿資訊不足"
+        return "\n".join(f"• {line}" for line in base[:5])
 
     if mode == "action_items":
         actions = _extract_action_lines(chosen)
         if not actions:
-            return "逐字稿資訊不足"
+            return "無明確待辦事項"
         return "\n".join(f"- [ ] {line}" for line in actions[:5])
 
-    return note + "\n" + "\n".join(chosen[:3])
+    if not compressed:
+        return "逐字稿資訊不足"
+    return "這段內容主要提到" + "；".join(compressed) + "。"
 
 
 def _summarize_with_guard(mode: str, text: str, system_prompt: str) -> str:
@@ -529,8 +567,11 @@ def _summarize_with_guard(mode: str, text: str, system_prompt: str) -> str:
     if _is_error_result(result):
         return _extractive_fallback(text, mode)
     if mode == "action_items":
+        # Model correctly determined no action items
+        if result in ("無明確待辦事項", "逐字稿資訊不足"):
+            return result
         normalized = _normalize_action_items_result(result, text)
-        if normalized != "逐字稿資訊不足":
+        if normalized not in ("逐字稿資訊不足", ""):
             return normalized
         return _extractive_fallback(text, mode)
     if _summary_has_out_of_transcript_text(result, text):
@@ -598,9 +639,9 @@ def summarize_full(text: str) -> str:
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
-        "可在不改變原意下做高度精簡與重述。"
+        "必須用自己的語言重新整合與表達，絕對禁止逐句照抄逐字稿原文。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        "請輸出一段精簡摘要，整理主要脈絡、重點與結論。"
+        "請輸出 2-4 句話的精簡摘要，整理主要脈絡、重點與結論。"
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
@@ -612,10 +653,10 @@ def summarize_key_points(text: str) -> str:
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
-        "可在不改變原意下做高度精簡與重述。"
+        "必須用自己的語言重新整合與表達，絕對禁止逐句照抄逐字稿原文。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        "以條列式呈現，每個重點用「•」開頭，列出 3-8 點。"
-        "請整理成有資訊量的重點，不要逐句照抄逐字稿。"
+        "以條列式呈現，每個重點用「•」開頭，列出 3-5 點。"
+        "每個重點應為完整的觀念或結論，而非單一句子片段。"
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
@@ -627,13 +668,13 @@ def extract_action_items(text: str) -> str:
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
-        "請以抽取為主、必要時可做精簡改寫。"
-        "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
-        "只列出明確的待辦、後續動作、要確認的事項。"
+        "只列出逐字稿中明確提到的待辦事項、後續動作、需確認的事項。"
+        "不可捏造、補充、或推測任何未在逐字稿中出現的行動。"
+        "不得輸出「補充背景」「待確認」「下一步」等模糊提示，只輸出具體的行動項目。"
         "不得輸出逐字稿校正建議、英文改寫建議、錯字修正文。"
-        "如果逐字稿只是分享經驗、敘述背景，沒有明確指派動作，請直接輸出「逐字稿資訊不足」。"
-        "使用繁體中文，每個項目獨立一行，且每個項目用「- [ ]」格式呈現。"
-        "若資訊不足或無待辦事項，僅輸出「逐字稿資訊不足」。"
+        "如果逐字稿只是分享經驗、說明概念，沒有明確指派動作，請直接輸出「無明確待辦事項」。"
+        "每個項目獨立一行，格式為「- [ ] 具體行動」。"
+        "若資訊不足或無待辦事項，輸出「無明確待辦事項」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
     return _summarize_with_guard("action_items", text, system_prompt)
