@@ -281,11 +281,11 @@ class STTEngine:
             sample_rate=self.SAMPLE_RATE,
             provider="cpu",
             decoding_method="modified_beam_search",
-            max_active_paths=4,
+            max_active_paths=8,
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=0.8,
-            rule2_min_trailing_silence=0.5,
-            rule3_min_utterance_length=15.0,
+            rule1_min_trailing_silence=0.6,
+            rule2_min_trailing_silence=0.4,
+            rule3_min_utterance_length=20.0,
         )
 
     def _get_buffer_duration_ms(self) -> int:
@@ -293,13 +293,23 @@ class STTEngine:
             return 0
         return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
 
+    SILENCE_THRESHOLD = 0.005  # 靜音門檻：低於此音量不處理
+
     def _append_pcm_chunk(self, chunk: bytes) -> None:
         try:
             pcm16 = np.frombuffer(chunk, dtype=np.int16)
             if pcm16.size == 0:
                 return
             pcm32 = pcm16.astype(np.float32) / 32768.0
-            self._last_audio_rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
+            
+            # 計算音量 (RMS)
+            rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
+            self._last_audio_rms = rms
+            
+            # 靜音過濾：如果音量太小，不加入緩衝區，避免 AI 產生幻覺
+            if rms < self.SILENCE_THRESHOLD:
+                return
+                
             self._pcm_buffer = np.concatenate([self._pcm_buffer, pcm32])
         except Exception as e:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)
