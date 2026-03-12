@@ -257,7 +257,7 @@ async function ensureModels(sendProgress) {
 
 // ── 後端啟動 ───────────────────────────────────────────
 
-function waitForServer(timeoutMs = 90000) {
+function waitForServer(timeoutMs = 600000, onStatus) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
@@ -278,9 +278,13 @@ function waitForServer(timeoutMs = 90000) {
           try {
             const json = JSON.parse(body);
             if (json.ok && json.models_ready) { resolve(); return; }
-            if (json.ok && json.stt_error) {
+            if (json.ok && json.stt_error && !json.stt_initializing) {
               reject(new Error(`STT 初始化失敗：${json.stt_error}`));
               return;
+            }
+            // 模型下載中，通知載入畫面更新文字
+            if (json.ok && json.stt_initializing && onStatus) {
+              onStatus("正在下載語音辨識模型，請稍候（約 1-5 分鐘）...");
             }
           } catch (_) {}
           retry();
@@ -291,7 +295,7 @@ function waitForServer(timeoutMs = 90000) {
     };
     const retry = () => {
       if (Date.now() - start > timeoutMs) { reject(new Error("Backend startup timeout")); return; }
-      setTimeout(tryOnce, 800);
+      setTimeout(tryOnce, 1500);
     };
     tryOnce();
   });
@@ -448,7 +452,13 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
   startBackend(modelEnv);
 
   try {
-    await waitForServer(90000);
+    await waitForServer(600000, (msg) => {
+      if (!mainWin.isDestroyed()) {
+        mainWin.webContents.executeJavaScript(
+          `document.querySelector('.h') && (document.querySelector('.h').textContent = ${JSON.stringify(msg)})`
+        ).catch(() => {});
+      }
+    });
     await mainWin.loadURL(BACKEND_URL);
   } catch (e) {
     let msg = `後端服務無法就緒。\n\n${e.message}`;

@@ -77,14 +77,27 @@ class _UnavailableSTT:
         return self._error
 
 
-# 全域 STT 引擎實例（初始化失敗時不讓整個 Flask 進程退出）
+# 全域 STT 引擎實例（背景執行緒初始化，避免模型下載阻塞 Flask 啟動）
 _stt_init_error = ""
-try:
-    stt = STTEngine(model_size="medium")
-except Exception as e:
-    _stt_init_error = str(e)
-    print(f"[STT] 初始化失敗，後端將以降級模式啟動: {_stt_init_error}", flush=True)
-    stt = _UnavailableSTT(e)
+_stt_init_done = threading.Event()
+stt: STTEngine | _UnavailableSTT = _UnavailableSTT(Exception("STT 初始化中..."))
+
+
+def _init_stt_background():
+    global stt, _stt_init_error
+    try:
+        instance = STTEngine(model_size="medium")
+        stt = instance
+        print("[STT] 模型初始化完成，後端就緒", flush=True)
+    except Exception as e:
+        _stt_init_error = str(e)
+        print(f"[STT] 初始化失敗，後端將以降級模式啟動: {_stt_init_error}", flush=True)
+        stt = _UnavailableSTT(e)
+    finally:
+        _stt_init_done.set()
+
+
+threading.Thread(target=_init_stt_background, daemon=True).start()
 
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
@@ -134,11 +147,13 @@ def index():
 @app.route("/health")
 def health():
     summary_status = summary_engine_status()
-    stt_ok = stt.state != "error"
+    stt_initializing = not _stt_init_done.is_set()
+    stt_ok = _stt_init_done.is_set() and stt.state != "error"
     return {
         "ok": True,
         "models_ready": stt_ok,
         "stt_ready": stt_ok,
+        "stt_initializing": stt_initializing,
         "stt_error": _stt_init_error or None,
         "summary_ready": summary_status["ready"],
         "summary_mode": summary_status["mode"],
