@@ -1154,6 +1154,10 @@
                 }
                 cleanupRecordingGraph({ releaseStream: true });
                 await emitWithAck('stop_recording', {}).catch(() => null);
+                
+                // 強制將狀態切回 idle，確保按鈕恢復
+                currentState = 'idle';
+                
                 if (previousMeetingName) {
                     lastMeetingNameUsed = previousMeetingName;
                     lastCompletedMeetingName = previousMeetingName;
@@ -1162,6 +1166,7 @@
                 meetingInput.disabled = false;
                 refreshStoragePath();
                 meetingInput.focus();
+                updateUI(); // 立即更新按鈕狀態
                 updateSessionStage();
                 showToast(t('toast_session_finished'));
             } catch (err) {
