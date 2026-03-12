@@ -23,7 +23,7 @@ def main():
     run([
         "pyinstaller",
         "--clean",
-        "--onefile",
+        "--onedir",
         "--noconsole",
         "--name", "ai_meeting_backend",
         "--add-data", f"templates{data_sep}templates",
@@ -36,16 +36,14 @@ def main():
         "app.py",
     ])
 
-    candidates = [
-        DIST / "ai_meeting_backend",
-        DIST / "ai_meeting_backend.exe",
-    ]
-    built = next((p for p in candidates if p.exists()), None)
-    if built is None:
-        raise SystemExit("build failed: backend binary not found")
-    out_bin = OUT_DIR / built.name
-    shutil.copy2(built, out_bin)
-    print(f"backend binary -> {out_bin}")
+    built_dir = DIST / "ai_meeting_backend"
+    if not built_dir.exists():
+        raise SystemExit("build failed: onedir output not found")
+
+    # Copy the entire onedir bundle (exe + _internal/) into desktop/backend/
+    shutil.copytree(built_dir, OUT_DIR, dirs_exist_ok=True)
+    exe_name = "ai_meeting_backend.exe" if os.name == "nt" else "ai_meeting_backend"
+    print(f"backend onedir bundle -> {OUT_DIR / exe_name}")
 
 
 if __name__ == "__main__":
