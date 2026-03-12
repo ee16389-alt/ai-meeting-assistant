@@ -30,7 +30,9 @@ from cognition import (
     summary_engine_status,
 )
 
-app = Flask(__name__)
+_base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+app = Flask(__name__, template_folder=os.path.join(_base_path, "templates"),
+            static_folder=os.path.join(_base_path, "static"))
 app.config["SECRET_KEY"] = "meeting-assistant-secret"
 socketio = SocketIO(
     app,
