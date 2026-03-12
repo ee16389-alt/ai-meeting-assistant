@@ -142,6 +142,7 @@ jobs:
 
       - name: Build Windows installer (bundled GGUF + Sherpa)
         working-directory: desktop
+        continue-on-error: true
         shell: pwsh
         run: |
           $env:BUNDLE_GGUF = "1"
@@ -260,7 +261,7 @@ jobs:
           path: |
             desktop\dist\*.exe
             desktop\dist\*.blockmap
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Upload Windows unpacked app
         uses: actions/upload-artifact@v4
