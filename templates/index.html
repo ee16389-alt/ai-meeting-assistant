@@ -1182,7 +1182,8 @@
 
                 if (!audioContext) {
                     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                    audioContext = new AudioCtx({ sampleRate: 16000 });
+                    // 先不指定取樣率建立 Context，取得硬體原始取樣率
+                    audioContext = new AudioCtx();
                     audioSourceNode = null;
                     processor = null;
                 }
@@ -1191,16 +1192,20 @@
                     await audioContext.resume();
                 }
 
+                console.log(`[Audio] 麥克風原始取樣率: ${audioContext.sampleRate} Hz`);
+
                 if (!audioSourceNode) {
                     audioSourceNode = audioContext.createMediaStreamSource(audioStream);
                 }
 
                 if (!processor) {
+                    // 使用 4096 緩衝大小
                     processor = audioContext.createScriptProcessor(4096, 1, 1);
 
                     processor.onaudioprocess = (e) => {
                         if (!isRecording || !recordingSessionReady || !socket.connected) return;
                         const input = e.inputBuffer.getChannelData(0);
+                        // 強制降頻至 16000 Hz
                         const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
                         const pcm16 = floatTo16BitPCM(downsampled);
                         diagSentChunks += 1;

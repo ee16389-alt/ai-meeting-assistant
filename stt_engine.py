@@ -280,11 +280,12 @@ class STTEngine:
             num_threads=max(1, (os.cpu_count() or 4) - 1),
             sample_rate=self.SAMPLE_RATE,
             provider="cpu",
-            decoding_method="greedy_search",
+            decoding_method="modified_beam_search",
+            max_active_paths=4,
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=0.6,
-            rule2_min_trailing_silence=0.3,
-            rule3_min_utterance_length=8.0,
+            rule1_min_trailing_silence=0.8,
+            rule2_min_trailing_silence=0.5,
+            rule3_min_utterance_length=15.0,
         )
 
     def _get_buffer_duration_ms(self) -> int:
