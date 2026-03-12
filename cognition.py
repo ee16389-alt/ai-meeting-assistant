@@ -680,6 +680,51 @@ def extract_action_items(text: str) -> str:
     return _summarize_with_guard("action_items", text, system_prompt)
 
 
+def summarize_all_in_one(text: str) -> dict:
+    """一次性產出全文摘要、重點條列與待辦事項，節省推論時間。"""
+    system_prompt = (
+        "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
+        "請針對提供的逐字稿，一次性提供以下三個部分的內容：\n"
+        "1. 【全文摘要】：用 2-4 句話精簡整理主要脈絡與結論。\n"
+        "2. 【重點條列】：列出 3-5 個核心重點，以「•」開頭。\n"
+        "3. 【待辦清單】：列出具體行動項目，以「- [ ]」開頭。\n"
+        "規則：禁止照抄原文、禁止臆測、禁止輸出角色標籤。若資訊不足，請在該項標註「逐字稿資訊不足」。"
+        + COMMON_OUTPUT_GUARDRAILS
+    )
+    
+    if _is_info_insufficient(text):
+        return {
+            "full": _insufficient_info_fallback(text, "full"),
+            "key_points": _insufficient_info_fallback(text, "key_points"),
+            "action_items": _insufficient_info_fallback(text, "action_items")
+        }
+
+    raw_result = _call_model(system_prompt, text).strip()
+    
+    # 簡單的切割邏輯（根據標題）
+    parts = {"full": "", "key_points": "", "action_items": ""}
+    
+    if "【全文摘要】" in raw_result:
+        full_part = raw_result.split("【全文摘要】")[-1].split("【重點條列】")[0].split("【待辦清單】")[0].strip()
+        parts["full"] = full_part
+    if "【重點條列】" in raw_result:
+        key_part = raw_result.split("【重點條列】")[-1].split("【待辦清單】")[0].strip()
+        parts["key_points"] = key_part
+    if "【待辦清單】" in raw_result:
+        action_part = raw_result.split("【待辦清單】")[-1].strip()
+        parts["action_items"] = action_part
+        
+    # 如果切割失敗，則嘗試解析
+    if not parts["full"] and not parts["key_points"]:
+        return {
+            "full": raw_result,
+            "key_points": "請見上方摘要",
+            "action_items": "請見上方摘要"
+        }
+        
+    return parts
+
+
 def check_health() -> bool:
     """檢查摘要引擎是否可用（本地 GGUF 或 Ollama）"""
     if _local_model_available():

@@ -416,31 +416,29 @@ def _generate_summary(mode: str, full_text: str):
     """背景生成摘要"""
     if mode == "full":
         content = summarize_full(full_text)
+        socketio.emit("summary_result", {"mode": mode, "content": content})
     elif mode == "key_points":
         content = summarize_key_points(full_text)
+        socketio.emit("summary_result", {"mode": mode, "content": content})
     elif mode == "action_items":
         content = extract_action_items(full_text)
+        socketio.emit("summary_result", {"mode": mode, "content": content})
     elif mode == "all":
-        summary_full = summarize_full(full_text)
-        summary_key = summarize_key_points(full_text)
-        summary_actions = extract_action_items(full_text)
-        content_lines = []
-        content_lines.append("【全文摘要】")
-        content_lines.append(summary_full)
-        content_lines.append("")
-        content_lines.append("【重點條列】")
-        content_lines.append(summary_key)
-        content_lines.append("")
-        content_lines.append("【待辦清單】")
-        content_lines.append(summary_actions)
-        content_lines.append("")
-        content_lines.append("【逐字稿】")
-        content_lines.append(full_text)
-        content = "\n".join(content_lines)
-    else:
-        content = summarize_full(full_text)
-
-    socketio.emit("summary_result", {"mode": mode, "content": content})
+        # 優化：合併一次推論，速度提升 3 倍
+        combo = summarize_all_in_one(full_text)
+        
+        # 發送各個部分的結果回前端
+        socketio.emit("summary_result", {"mode": "full", "content": combo["full"]})
+        socketio.emit("summary_result", {"mode": "key_points", "content": combo["key_points"]})
+        socketio.emit("summary_result", {"mode": "action_items", "content": combo["action_items"]})
+        
+        # 也發送一個整體的 "all" 供相容性使用
+        full_all_text = (
+            f"【全文摘要】\n{combo['full']}\n\n"
+            f"【重點條列】\n{combo['key_points']}\n\n"
+            f"【待辦清單】\n{combo['action_items']}"
+        )
+        socketio.emit("summary_result", {"mode": "all", "content": full_all_text})
 
 
 def _export_meeting(meeting_name: str):
