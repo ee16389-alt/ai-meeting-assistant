@@ -55,6 +55,7 @@ module.exports = {
   appId: "com.minashih.ai-meeting-assistant",
   productName: "AI Meeting Assistant",
   artifactName: `\${productName}-\${version}-\${arch}${artifactSuffix}.\${ext}`,
+  compression: "store",
   files: [
     "**/*",
     "!backend/**",
