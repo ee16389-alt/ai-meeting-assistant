@@ -1,268 +1,437 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { spawn } = require("child_process");
-const { ensureOllama, ensureModel } = require("./ollama");
+const https = require("https");
 const http = require("http");
+const { spawn, execFile } = require("child_process");
 
 const BACKEND_PORT = 8000;
 const BACKEND_URL = `http://127.0.0.1:${BACKEND_PORT}`;
 
 let backendProcess = null;
-let backendStartError = null;
-let backendExitInfo = null;
 let backendRecentLogs = [];
 
-function appendBackendLog(stream, chunk) {
-  const text = chunk ? chunk.toString() : "";
-  if (!text) return;
+// ── 工具函式 ───────────────────────────────────────────
 
-  const lines = text.split(/\r?\n/).filter(Boolean);
-  lines.forEach((line) => console.log(`[backend:${stream}] ${line}`));
-  backendRecentLogs.push(...lines.map((line) => `[${stream}] ${line}`));
-  if (backendRecentLogs.length > 40) {
-    backendRecentLogs = backendRecentLogs.slice(-40);
-  }
+function appendBackendLog(stream, chunk) {
+  const lines = (chunk ? chunk.toString() : "").split(/\r?\n/).filter(Boolean);
+  lines.forEach((l) => console.log(`[backend:${stream}] ${l}`));
+  backendRecentLogs.push(...lines.map((l) => `[${stream}] ${l}`));
+  if (backendRecentLogs.length > 40) backendRecentLogs = backendRecentLogs.slice(-40);
 }
 
-function ensureBackendModelCompatPath() {
-  if (!app.isPackaged) return;
-
-  const srcModelsDir = path.join(process.resourcesPath, "models");
-  const backendInternalDir = path.join(process.resourcesPath, "backend", "_internal");
-  const compatModelsDir = path.join(backendInternalDir, "models");
-
-  try {
-    if (!fs.existsSync(srcModelsDir) || !fs.existsSync(backendInternalDir)) return;
-    if (fs.existsSync(compatModelsDir)) return;
-
-    fs.mkdirSync(backendInternalDir, { recursive: true });
+function loadModelPackConfig() {
+  const candidates = [
+    app.isPackaged
+      ? path.join(process.resourcesPath, "model_pack_config.json")
+      : null,
+    path.join(__dirname, "model_pack_config.json"),
+  ].filter(Boolean);
+  for (const p of candidates) {
     try {
-      fs.symlinkSync(srcModelsDir, compatModelsDir, "dir");
-      console.log("[backend] created model compat symlink:", compatModelsDir, "->", srcModelsDir);
-    } catch (linkErr) {
-      fs.cpSync(srcModelsDir, compatModelsDir, { recursive: true });
-      console.log("[backend] copied model compat dir:", compatModelsDir, "(symlink failed:", String(linkErr), ")");
-    }
-  } catch (e) {
-    console.error("[backend] failed to prepare model compat path:", e);
+      if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
+    } catch (_) {}
   }
+  return {};
+}
+
+// ── 模型路徑管理 ───────────────────────────────────────
+
+function modelsBaseDir() {
+  // 打包版：AppData/Roaming/AI Meeting Assistant/models
+  // 開發版：專案根目錄/desktop/models
+  if (app.isPackaged) {
+    return path.join(app.getPath("userData"), "models");
+  }
+  return path.join(__dirname, "models");
 }
 
 function hasBundledModels() {
   if (!app.isPackaged) return false;
-
   const ggufDir = path.join(process.resourcesPath, "models", "llm");
   const sherpaDir = path.join(process.resourcesPath, "models", "sherpa-onnx");
-
   try {
     const hasGguf =
       fs.existsSync(ggufDir) &&
-      fs.readdirSync(ggufDir).some((name) => name.toLowerCase().endsWith(".gguf"));
-    const hasSherpa = fs.existsSync(sherpaDir);
-    return hasGguf && hasSherpa;
+      fs.readdirSync(ggufDir).some((n) => n.toLowerCase().endsWith(".gguf"));
+    return hasGguf && fs.existsSync(sherpaDir);
   } catch (_) {
     return false;
   }
 }
 
-function waitForServer(url, timeoutMs = 30000) {
+function hasDownloadedModels() {
+  const cfg = loadModelPackConfig();
+  const base = modelsBaseDir();
+  const ggufPath = path.join(base, "llm", cfg.ggufFilename || "");
+  const sherpaDir = path.join(base, "sherpa-onnx", cfg.sherpaModelDirName || "");
+  return (
+    cfg.ggufFilename &&
+    fs.existsSync(ggufPath) &&
+    cfg.sherpaModelDirName &&
+    fs.existsSync(sherpaDir) &&
+    fs.existsSync(path.join(sherpaDir, "tokens.txt"))
+  );
+}
+
+function ensureBackendModelCompatPath() {
+  if (!app.isPackaged) return;
+  const srcModelsDir = path.join(process.resourcesPath, "models");
+  const backendInternalDir = path.join(process.resourcesPath, "backend", "_internal");
+  const compatModelsDir = path.join(backendInternalDir, "models");
+  try {
+    if (!fs.existsSync(srcModelsDir) || !fs.existsSync(backendInternalDir)) return;
+    if (fs.existsSync(compatModelsDir)) return;
+    fs.mkdirSync(backendInternalDir, { recursive: true });
+    try {
+      fs.symlinkSync(srcModelsDir, compatModelsDir, "junction");
+    } catch (_) {
+      fs.cpSync(srcModelsDir, compatModelsDir, { recursive: true });
+    }
+  } catch (e) {
+    console.error("[backend] model compat path error:", e);
+  }
+}
+
+// ── 下載邏輯 ───────────────────────────────────────────
+
+function downloadFile(url, destPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const follow = (currentUrl, redirectCount) => {
+      if (redirectCount > 10) return reject(new Error("Too many redirects: " + currentUrl));
+      const mod = currentUrl.startsWith("https://") ? https : http;
+      const req = mod.get(currentUrl, { headers: { "User-Agent": "Mozilla/5.0" } }, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const next = res.headers.location.startsWith("http")
+            ? res.headers.location
+            : new URL(res.headers.location, currentUrl).href;
+          res.resume();
+          return follow(next, redirectCount + 1);
+        }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${res.statusCode} for ${currentUrl}`));
+        }
+
+        const total = parseInt(res.headers["content-length"] || "0", 10);
+        let downloaded = 0;
+        const tmp = destPath + ".tmp";
+        const out = fs.createWriteStream(tmp);
+
+        res.on("data", (chunk) => {
+          downloaded += chunk.length;
+          if (total > 0) onProgress({ downloaded, total, percent: Math.floor((downloaded / total) * 100) });
+          else onProgress({ downloaded, total: 0, percent: -1 });
+        });
+        res.pipe(out);
+        out.on("finish", () => {
+          out.close(() => {
+            try { fs.renameSync(tmp, destPath); } catch (_) {}
+            resolve();
+          });
+        });
+        out.on("error", (e) => { try { fs.unlinkSync(tmp); } catch (_) {} reject(e); });
+        res.on("error", reject);
+      });
+      req.on("error", reject);
+      req.setTimeout(30000, () => { req.destroy(); reject(new Error("Request timeout")); });
+    };
+    follow(url, 0);
+  });
+}
+
+function extractZip(zipPath, destDir) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    // PowerShell Expand-Archive (built into Windows 5.0+)
+    const ps = spawn("powershell", [
+      "-NoProfile", "-NonInteractive", "-Command",
+      `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
+    ], { windowsHide: true });
+    ps.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Expand-Archive failed with code ${code}`));
+    });
+    ps.on("error", reject);
+  });
+}
+
+function findSherpaModelDir(sherpaBase, expectedName) {
+  // Try exact match first
+  const exact = path.join(sherpaBase, expectedName);
+  if (fs.existsSync(exact) && fs.existsSync(path.join(exact, "tokens.txt"))) return exact;
+
+  // Walk up to 2 levels to find the dir with tokens.txt
+  const search = (dir, depth) => {
+    if (depth < 0) return null;
+    try {
+      for (const entry of fs.readdirSync(dir)) {
+        const full = path.join(dir, entry);
+        if (fs.statSync(full).isDirectory()) {
+          if (entry === expectedName && fs.existsSync(path.join(full, "tokens.txt"))) return full;
+          if (fs.existsSync(path.join(full, "tokens.txt"))) return full;
+          const nested = search(full, depth - 1);
+          if (nested) return nested;
+        }
+      }
+    } catch (_) {}
+    return null;
+  };
+  return search(sherpaBase, 2);
+}
+
+async function ensureModels(sendProgress) {
+  const cfg = loadModelPackConfig();
+  if (!cfg.ggufFilename || !cfg.ggufDownloadUrl || !cfg.sherpaModelDirName || !cfg.sherpaZipDownloadUrl) {
+    throw new Error("model_pack_config.json 缺少必要欄位");
+  }
+
+  const base = modelsBaseDir();
+  const ggufDir = path.join(base, "llm");
+  const sherpaBase = path.join(base, "sherpa-onnx");
+  const ggufPath = path.join(ggufDir, cfg.ggufFilename);
+  const sherpaFinal = path.join(sherpaBase, cfg.sherpaModelDirName);
+
+  // ── 下載 GGUF ──────────────────────────────────────
+  if (!fs.existsSync(ggufPath)) {
+    fs.mkdirSync(ggufDir, { recursive: true });
+    sendProgress({ stage: "gguf", percent: 0, text: `下載語言模型 (${cfg.ggufFilename})...` });
+    await downloadFile(cfg.ggufDownloadUrl, ggufPath, ({ percent, downloaded, total }) => {
+      const mb = (downloaded / 1024 / 1024).toFixed(0);
+      const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
+      sendProgress({
+        stage: "gguf",
+        percent: percent >= 0 ? Math.floor(percent * 0.7) : -1,
+        text: `下載語言模型... ${mb} MB ${totalMb}`,
+      });
+    });
+    sendProgress({ stage: "gguf", percent: 70, text: "語言模型下載完成" });
+  } else {
+    sendProgress({ stage: "gguf", percent: 70, text: "語言模型已存在，跳過下載" });
+  }
+
+  // ── 下載 sherpa-onnx ────────────────────────────────
+  if (!fs.existsSync(sherpaFinal) || !fs.existsSync(path.join(sherpaFinal, "tokens.txt"))) {
+    fs.mkdirSync(sherpaBase, { recursive: true });
+    const zipPath = path.join(base, "sherpa-onnx.zip");
+    sendProgress({ stage: "sherpa", percent: 70, text: "下載語音辨識模型..." });
+    await downloadFile(cfg.sherpaZipDownloadUrl, zipPath, ({ percent, downloaded, total }) => {
+      const mb = (downloaded / 1024 / 1024).toFixed(0);
+      const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
+      sendProgress({
+        stage: "sherpa",
+        percent: percent >= 0 ? 70 + Math.floor(percent * 0.25) : -1,
+        text: `下載語音辨識模型... ${mb} MB ${totalMb}`,
+      });
+    });
+
+    sendProgress({ stage: "sherpa", percent: 95, text: "解壓縮語音辨識模型..." });
+    await extractZip(zipPath, sherpaBase);
+    try { fs.unlinkSync(zipPath); } catch (_) {}
+
+    // Normalize directory name
+    const found = findSherpaModelDir(sherpaBase, cfg.sherpaModelDirName);
+    if (found && found !== sherpaFinal) {
+      fs.renameSync(found, sherpaFinal);
+    }
+    if (!fs.existsSync(path.join(sherpaFinal, "tokens.txt"))) {
+      throw new Error("sherpa-onnx 模型解壓縮後結構異常，請重新嘗試。");
+    }
+  }
+
+  sendProgress({ stage: "done", percent: 100, text: "模型準備完成，正在啟動..." });
+  return { ggufPath, sherpaModelDir: sherpaFinal };
+}
+
+// ── 後端啟動 ───────────────────────────────────────────
+
+function waitForServer(timeoutMs = 90000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
-      const req = http.get(url + "/health", (res) => {
-        if (res.statusCode === 200) {
-          resolve();
-        } else {
+      const req = http.get(BACKEND_URL + "/health", (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(body);
+            if (json.ok && json.models_ready) { resolve(); return; }
+          } catch (_) {}
           retry();
-        }
+        });
       });
       req.on("error", retry);
+      req.setTimeout(2000, () => { req.destroy(); retry(); });
     };
     const retry = () => {
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error("Backend timeout"));
-        return;
-      }
-      setTimeout(tryOnce, 500);
+      if (Date.now() - start > timeoutMs) { reject(new Error("Backend startup timeout")); return; }
+      setTimeout(tryOnce, 800);
     };
     tryOnce();
   });
 }
 
-function startBackend() {
-  const isProd = app.isPackaged;
-  backendStartError = null;
-  backendExitInfo = null;
+function startBackend(modelEnv = {}) {
   backendRecentLogs = [];
-  const exportRoot = isProd
-    ? path.join(app.getPath("documents"), "AI Meeting Assistant")
-    : path.resolve(__dirname, "..");
-  if (isProd) {
-    const backendName = process.platform === "win32" ? "ai_meeting_backend.exe" : "ai_meeting_backend";
-    const backendPath = path.join(process.resourcesPath, "backend", backendName);
-    backendProcess = spawn(backendPath, [], {
-      cwd: path.dirname(backendPath),
-      env: {
-        ...process.env,
-        PORT: String(BACKEND_PORT),
-        AMA_EXPORT_ROOT: exportRoot,
-      },
+  const exportRoot = path.join(app.getPath("documents"), "AI Meeting Assistant");
+  const env = {
+    ...process.env,
+    PORT: String(BACKEND_PORT),
+    AMA_EXPORT_ROOT: exportRoot,
+    AMA_DISABLE_OLLAMA_FALLBACK: "1",
+    ...modelEnv,
+  };
+
+  if (app.isPackaged) {
+    const backendExe = path.join(process.resourcesPath, "backend", "ai_meeting_backend.exe");
+    backendProcess = spawn(backendExe, [], {
+      cwd: path.dirname(backendExe),
+      env,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
   } else {
-    // Dev: use system python to run app.py
-    const projectRoot = path.resolve(__dirname, "..");
     backendProcess = spawn("python3", ["app.py"], {
-      cwd: projectRoot,
-      env: {
-        ...process.env,
-        PORT: String(BACKEND_PORT),
-        AMA_EXPORT_ROOT: exportRoot,
-      },
+      cwd: path.resolve(__dirname, ".."),
+      env,
       stdio: "inherit",
     });
   }
 
-  if (isProd && backendProcess.stdout) {
-    backendProcess.stdout.on("data", (chunk) => appendBackendLog("stdout", chunk));
-  }
-
-  if (isProd && backendProcess.stderr) {
-    backendProcess.stderr.on("data", (chunk) => appendBackendLog("stderr", chunk));
-  }
-
-  backendProcess.on("error", (err) => {
-    backendStartError = err ? (err.message || String(err)) : "unknown spawn error";
-    console.error("[backend] spawn error:", backendStartError);
-  });
-
-  backendProcess.on("exit", (code, signal) => {
-    backendExitInfo = { code, signal };
-    console.error("[backend] exited:", backendExitInfo);
-  });
+  backendProcess.stdout?.on("data", (c) => appendBackendLog("stdout", c));
+  backendProcess.stderr?.on("data", (c) => appendBackendLog("stderr", c));
+  backendProcess.on("exit", (code) => console.log(`[backend] exited code=${code}`));
 }
 
-async function createWindow() {
-  const bundledMode = hasBundledModels();
-  if (bundledMode) {
-    // For bundled builds, prefer a true offline path: backend must use local GGUF only.
-    process.env.AMA_DISABLE_OLLAMA_FALLBACK = "1";
-    ensureBackendModelCompatPath();
-  }
+// ── 進度視窗 ───────────────────────────────────────────
 
-  if (!bundledMode) {
-    const ollamaReady = await ensureOllama();
-    if (!ollamaReady) {
-      app.quit();
-      return;
-    }
-
-    const progressWin = new BrowserWindow({
-      width: 520,
-      height: 220,
-      resizable: false,
-      minimizable: false,
-      maximizable: false,
-      modal: true,
-      show: false,
-      title: "下載模型中",
-      webPreferences: {
-        nodeIntegration: true,
-        contextIsolation: false,
-      },
-    });
-
-    const progressHtml = `
-      <html>
-      <body style="font-family: -apple-system, system-ui, sans-serif; background: #fff; margin: 0;">
-        <div style="padding: 20px;">
-          <h3 style="margin: 0 0 12px 0; color: #111827;">正在下載語言模型...</h3>
-          <div style="height: 10px; background: #f3f4f6; border-radius: 999px; overflow: hidden;">
-            <div id="bar" style="height: 100%; width: 0%; background: #f36b21; transition: width 0.2s;"></div>
-          </div>
-          <div id="status" style="margin-top: 12px; font-size: 12px; color: #6b7280;">準備下載</div>
-        </div>
-        <script>
-          const { ipcRenderer } = require('electron');
-          ipcRenderer.on('progress', (_, payload) => {
-            if (payload && payload.percent !== null) {
-              document.getElementById('bar').style.width = payload.percent + '%';
-            }
-            if (payload && payload.text) {
-              document.getElementById('status').textContent = payload.text.trim().slice(0, 200);
-            }
-          });
-        </script>
-      </body>
-      </html>
-    `;
-
-    progressWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(progressHtml));
-    progressWin.once("ready-to-show", () => progressWin.show());
-
-    const sendProgress = (payload) => {
-      if (progressWin.isDestroyed()) return;
-      if (progressWin.webContents.isDestroyed()) return;
-      progressWin.webContents.send("progress", payload);
-    };
-
-    const setProgressBarSafe = (value) => {
-      if (progressWin.isDestroyed()) return;
-      progressWin.setProgressBar(value);
-    };
-
-    const modelOk = await ensureModel((text) => {
-      const match = text.match(/(\\d+)%/);
-      const percent = match ? parseInt(match[1], 10) : null;
-      sendProgress({ percent, text });
-      if (percent !== null) {
-        setProgressBarSafe(percent / 100);
-      }
-    });
-    setProgressBarSafe(-1);
-    if (!progressWin.isDestroyed()) {
-      progressWin.close();
-    }
-    if (!modelOk) {
-      dialog.showErrorBox("模型下載失敗", "無法下載語言模型，請稍後再試。");
-    }
-  }
-
-  startBackend();
-  try {
-    await waitForServer(BACKEND_URL);
-  } catch (e) {
-    let detail = "無法連線到後端服務，請稍後再試。";
-    if (backendStartError) {
-      detail += `\n\n啟動錯誤: ${backendStartError}`;
-    } else if (backendExitInfo && (backendExitInfo.code !== null || backendExitInfo.signal)) {
-      detail += `\n\n後端已結束（code=${backendExitInfo.code}, signal=${backendExitInfo.signal || "none"}）。`;
-    }
-    if (backendRecentLogs.length) {
-      detail += `\n\n最近後端輸出:\n${backendRecentLogs.slice(-8).join("\n")}`;
-    }
-    dialog.showErrorBox("後端啟動失敗", detail);
-  }
-
+function createProgressWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    backgroundColor: "#ffffff",
-    webPreferences: {
-      contextIsolation: true,
-    },
+    width: 520, height: 260,
+    resizable: false, minimizable: false, maximizable: false,
+    show: false, title: "AI 會議助理 — 初始化",
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
 
-  await win.loadURL(BACKEND_URL);
+  win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:-apple-system,system-ui,sans-serif; background:#fff8f3; padding:28px; }
+h3 { font-size:1rem; color:#111827; margin-bottom:6px; }
+p  { font-size:0.8rem; color:#6b7280; margin-bottom:20px; }
+.track { height:8px; background:#fed7aa; border-radius:99px; overflow:hidden; }
+.bar   { height:100%; background:#f36b21; border-radius:99px; width:0%; transition:width 0.3s; }
+.status { margin-top:12px; font-size:0.78rem; color:#92400e; min-height:1.2em; }
+</style></head>
+<body>
+  <h3>AI 會議助理 — 首次啟動</h3>
+  <p>正在下載 AI 模型（約 2 GB），下載完成後即可離線使用。</p>
+  <div class="track"><div id="bar" class="bar"></div></div>
+  <div id="status" class="status">準備中...</div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    ipcRenderer.on('progress', (_, p) => {
+      if (p.percent >= 0) document.getElementById('bar').style.width = p.percent + '%';
+      if (p.text) document.getElementById('status').textContent = p.text;
+    });
+  </script>
+</body></html>`));
+
+  win.once("ready-to-show", () => win.show());
+  return win;
+}
+
+// ── 主流程 ─────────────────────────────────────────────
+
+async function createWindow() {
+  let modelEnv = {};
+
+  if (hasBundledModels()) {
+    // 已打包模型（未來可能的完整包版本）
+    process.env.AMA_DISABLE_OLLAMA_FALLBACK = "1";
+    ensureBackendModelCompatPath();
+  } else {
+    // 首次下載 or 已下載過
+    if (!hasDownloadedModels()) {
+      const progressWin = createProgressWindow();
+      const send = (payload) => {
+        if (!progressWin.isDestroyed()) {
+          progressWin.webContents.send("progress", payload);
+          if (payload.percent >= 0) progressWin.setProgressBar(payload.percent / 100);
+        }
+      };
+
+      try {
+        const { ggufPath, sherpaModelDir } = await ensureModels(send);
+        modelEnv = {
+          AMA_GGUF_PATH: ggufPath,
+          AMA_SHERPA_DIR: sherpaModelDir,
+        };
+      } catch (err) {
+        if (!progressWin.isDestroyed()) progressWin.close();
+        dialog.showErrorBox(
+          "模型下載失敗",
+          `無法下載 AI 模型：\n\n${err.message}\n\n請確認網路連線後重新啟動。`
+        );
+        app.quit();
+        return;
+      }
+
+      progressWin.setProgressBar(-1);
+      if (!progressWin.isDestroyed()) progressWin.close();
+    } else {
+      // 已下載過，直接讀路徑
+      const cfg = loadModelPackConfig();
+      const base = modelsBaseDir();
+      modelEnv = {
+        AMA_GGUF_PATH: path.join(base, "llm", cfg.ggufFilename),
+        AMA_SHERPA_DIR: path.join(base, "sherpa-onnx", cfg.sherpaModelDirName),
+      };
+    }
+  }
+
+  // 主視窗（先顯示載入畫面）
+  const mainWin = new BrowserWindow({
+    width: 1280, height: 800,
+    backgroundColor: "#fff8f3",
+    show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+
+  mainWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:-apple-system,sans-serif;color:#1f2937;}
+.s{width:36px;height:36px;border:3px solid #fed7aa;border-top-color:#f36b21;border-radius:50%;animation:spin .8s linear infinite;margin-bottom:14px;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.t{font-size:1.1rem;font-weight:600;margin-bottom:6px;}
+.h{font-size:.8rem;color:#94a3b8;}
+</style></head>
+<body><div class="s"></div><div class="t">AI 會議助理</div><div class="h">正在載入 AI 模型，請稍候...</div></body></html>`));
+
+  mainWin.once("ready-to-show", () => mainWin.show());
+
+  startBackend(modelEnv);
+
+  try {
+    await waitForServer(90000);
+    await mainWin.loadURL(BACKEND_URL);
+  } catch (e) {
+    let msg = `後端服務無法就緒。\n\n${e.message}`;
+    if (backendRecentLogs.length) msg += `\n\n最近日誌：\n${backendRecentLogs.slice(-6).join("\n")}`;
+    dialog.showErrorBox("啟動失敗", msg);
+    app.quit();
+  }
 }
 
 app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
   if (backendProcess) {
-    backendProcess.kill();
+    backendProcess.kill("SIGTERM");
+    setTimeout(() => { if (backendProcess) backendProcess.kill("SIGKILL"); }, 3000);
   }
   app.quit();
 });

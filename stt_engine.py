@@ -78,6 +78,18 @@ def _load_model_pack_config() -> dict:
 
 
 def _find_bundled_sherpa_dir() -> Path:
+    # 優先使用環境變數指定路徑（首次下載後由 Electron 設定）
+    env_dir = os.environ.get("AMA_SHERPA_DIR", "").strip()
+    if env_dir:
+        p = Path(env_dir).expanduser()
+        if p.is_dir() and (p / "tokens.txt").exists():
+            return p
+        # 可能指向父目錄，往下找一層
+        if p.is_dir():
+            nested = sorted([d for d in p.iterdir() if d.is_dir() and (d / "tokens.txt").exists()])
+            if nested:
+                return nested[0]
+
     cfg = _load_model_pack_config()
     configured_name = str(cfg.get("sherpaModelDirName", "")).strip()
 
