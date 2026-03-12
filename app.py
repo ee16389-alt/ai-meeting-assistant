@@ -383,9 +383,14 @@ def handle_open_storage_folder(data=None):
 def handle_export(data):
     meeting_name = data.get("meeting_name", "").strip()
     transcript_override = data.get("transcript_override", "").strip()
+    summary_overrides = {
+        "full": data.get("summary_full", "").strip(),
+        "key_points": data.get("summary_key", "").strip(),
+        "action_items": data.get("summary_action", "").strip()
+    }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    socketio.start_background_task(_export_meeting, meeting_name, transcript_override)
+    socketio.start_background_task(_export_meeting, meeting_name, transcript_override, summary_overrides)
 
 
 @socketio.on("export_summary")
@@ -455,7 +460,7 @@ def _generate_summary(mode: str, full_text: str):
     end_summary_request()
 
 
-def _export_meeting(meeting_name: str, transcript_override: str = ""):
+def _export_meeting(meeting_name: str, transcript_override: str = "", summary_overrides: dict = None):
     """背景匯出逐字稿與摘要"""
     if transcript_override:
         full_text = transcript_override
@@ -464,6 +469,7 @@ def _export_meeting(meeting_name: str, transcript_override: str = ""):
             line.get("proofread", line["text"]) for line in transcript_lines
         )
 
+    # ... (逐字稿處理保持不變) ...
     # 組合逐字稿內容
     transcript_lines_out = []
     transcript_lines_out.append(f"會議名稱: {meeting_name}")
@@ -483,14 +489,20 @@ def _export_meeting(meeting_name: str, transcript_override: str = ""):
 
     transcript_content = "\n".join(transcript_lines_out)
 
-    # 使用快速合併摘要
-    if full_text.strip():
+    # 處理摘要內容：優先使用前端傳來的快取內容
+    if summary_overrides and summary_overrides.get("full"):
+        summary_full = summary_overrides["full"]
+        summary_key = summary_overrides["key_points"]
+        summary_actions = summary_overrides["action_items"]
+    elif full_text.strip():
+        # 如果前端沒傳摘要且逐字稿不為空，才進行推論
+        from cognition import summarize_all_in_one
         combo = summarize_all_in_one(full_text)
         summary_full = combo["full"]
         summary_key = combo["key_points"]
         summary_actions = combo["action_items"]
     else:
-        summary_full = "[錯誤] 尚無逐字稿內容可供摘要"
+        summary_full = "無內容可供摘要"
         summary_key = summary_full
         summary_actions = summary_full
 

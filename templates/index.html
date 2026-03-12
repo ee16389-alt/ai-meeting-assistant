@@ -1915,9 +1915,13 @@
                 showToast(t('alert_need_transcript_export'));
                 return;
             }
+            // 優化：傳送已經快取在前端的摘要內容，避免後端重複推論
             socket.emit('export_meeting', {
                 meeting_name: meetingName,
                 transcript_override: transcriptText,
+                summary_full: summaryCache.full,
+                summary_key: summaryCache.key_points,
+                summary_action: summaryCache.action_items,
             });
         }
 
