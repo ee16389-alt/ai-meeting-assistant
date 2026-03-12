@@ -266,6 +266,16 @@ function waitForServer(timeoutMs = 90000) {
   const start = Date.now();
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
+      // 檢查進程是否還活著
+      if (backendProcess && backendProcess.exitCode !== null) {
+        let msg = `後端程式已意外終止 (代碼: ${backendProcess.exitCode})。`;
+        if (backendRecentLogs.length) {
+          msg += `\n\n最近日誌：\n${backendRecentLogs.slice(-10).join("\n")}`;
+        }
+        reject(new Error(msg));
+        return;
+      }
+
       const req = http.get(BACKEND_URL + "/health", (res) => {
         let body = "";
         res.on("data", (c) => (body += c));
@@ -282,7 +292,7 @@ function waitForServer(timeoutMs = 90000) {
         });
       });
       req.on("error", retry);
-      req.setTimeout(2000, () => { req.destroy(); retry(); });
+      req.setTimeout(10000, () => { req.destroy(); retry(); });
     };
     const retry = () => {
       if (Date.now() - start > timeoutMs) { reject(new Error("Backend startup timeout")); return; }

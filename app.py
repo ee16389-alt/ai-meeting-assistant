@@ -571,15 +571,16 @@ def _export_summary(meeting_name: str, mode: str):
 
 
 if __name__ == "__main__":
-    print("=" * 50)
-    print("  AI 會議助理 v1.1.0")
-    print("  http://localhost:8000")
-    print("=" * 50)
+    print("=" * 50, flush=True)
+    print("  AI 會議助理後端啟動中...", flush=True)
+    print(f"  根目錄: {_base_path}", flush=True)
+    print("  http://localhost:8000", flush=True)
+    print("=" * 50, flush=True)
     socketio.run(
         app,
         host="0.0.0.0",
         port=8000,
-        debug=True,
+        debug=False,
         allow_unsafe_werkzeug=True,
         use_reloader=False,
     )

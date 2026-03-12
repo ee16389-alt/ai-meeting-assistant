@@ -685,7 +685,7 @@ def check_health() -> bool:
     if _local_model_available():
         return True
     try:
-        resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+        resp = requests.get("http://localhost:11434/api/tags", timeout=1)
         return resp.status_code == 200
     except Exception:
         return False
@@ -696,7 +696,7 @@ def summary_engine_status() -> dict:
     gguf_path = _find_local_gguf_path()
     ollama_ok = False
     try:
-        resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+        resp = requests.get("http://localhost:11434/api/tags", timeout=1)
         ollama_ok = resp.status_code == 200
     except Exception:
         ollama_ok = False
