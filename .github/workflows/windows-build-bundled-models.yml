@@ -57,6 +57,9 @@ jobs:
               [string]$Label
             )
 
+            $Url = $Url.Trim()
+            Write-Host "Downloading ${Label} from: $Url"
+
             $isDrive = $Url -match 'drive\.google\.com'
             if ($isDrive) {
               python -m gdown --fuzzy "$Url" -O "$OutFile"
@@ -64,7 +67,9 @@ jobs:
                 throw "gdown failed for ${Label}. If this is a Google Drive file, set sharing to 'Anyone with the link (Viewer)' and use a direct URL."
               }
             } else {
-              curl.exe -L --retry 3 --retry-delay 5 -o "$OutFile" "$Url"
+              $tmpUrl = [uri]::new($Url).AbsoluteUri
+              Write-Host "Resolved URI: $tmpUrl"
+              curl.exe -L --retry 3 --retry-delay 5 -o "$OutFile" $tmpUrl
               if ($LASTEXITCODE -ne 0) {
                 throw "curl failed for ${Label} (exit $LASTEXITCODE)"
               }
