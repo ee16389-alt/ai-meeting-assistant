@@ -10,10 +10,12 @@ from enum import Enum
 from pathlib import Path
 
 import numpy as np
+_sherpa_import_error: str = ""
 try:
     import sherpa_onnx  # type: ignore
-except Exception as _sherpa_import_error:
+except Exception as _e:
     sherpa_onnx = None  # type: ignore[assignment]
+    _sherpa_import_error = str(_e)
 
 try:
     import opencc  # type: ignore

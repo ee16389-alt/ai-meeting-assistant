@@ -2,6 +2,7 @@
 
 import os
 import sys
+import threading
 import time
 
 
@@ -18,7 +19,7 @@ def _configure_console_encoding() -> None:
 
 _configure_console_encoding()
 
-from flask import Flask, render_template
+from flask import Flask, render_template, send_from_directory
 from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
 from cognition import (
@@ -82,6 +83,7 @@ except Exception as e:
 
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
+_transcript_lock = threading.Lock()
 proofread_index = 0  # 追蹤下一個待校對的行號
 audio_chunk_count = 0
 audio_save_enabled = False
@@ -120,15 +122,17 @@ def _open_folder(path: str) -> None:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return send_from_directory(os.path.join(_base_path, "templates"), "index.html")
 
 
 @app.route("/health")
 def health():
     summary_status = summary_engine_status()
+    stt_ok = stt.state != "error"
     return {
         "ok": True,
-        "stt_ready": stt.state != "error",
+        "models_ready": stt_ok,
+        "stt_ready": stt_ok,
         "stt_error": _stt_init_error or None,
         "summary_ready": summary_status["ready"],
         "summary_mode": summary_status["mode"],
@@ -150,9 +154,11 @@ def handle_connect():
 
 @socketio.on("start_recording")
 def handle_start(data=None):
-    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name
-    transcript_lines = []
-    proofread_index = 0
+    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count
+    with _transcript_lock:
+        transcript_lines = []
+        proofread_index = 0
+    audio_chunk_count = 0
     audio_save_enabled = False
     if audio_file_handle:
         try:
@@ -171,7 +177,7 @@ def handle_start(data=None):
     current_meeting_name = meeting_name
 
     if save_audio:
-        export_dir = os.path.join(os.path.dirname(__file__), "download", meeting_name)
+        export_dir = _meeting_output_dir(meeting_name)
         os.makedirs(export_dir, exist_ok=True)
         audio_path = os.path.join(export_dir, "audio.webm")
         audio_file_handle = open(audio_path, "wb")
@@ -224,13 +230,14 @@ def handle_audio_chunk(data):
         emit("transcript_partial_clear")
 
     for seg in segments:
-        line = {
-            "index": len(transcript_lines),
-            "text": seg["text"],
-            "timestamp": time.strftime("%H:%M:%S"),
-            "language": seg.get("language", ""),
-        }
-        transcript_lines.append(line)
+        with _transcript_lock:
+            line = {
+                "index": len(transcript_lines),
+                "text": seg["text"],
+                "timestamp": time.strftime("%H:%M:%S"),
+                "language": seg.get("language", ""),
+            }
+            transcript_lines.append(line)
         emit("transcript_update", line)
 
         # 非同步校對
@@ -316,13 +323,14 @@ def handle_stop():
     state, final_segments = stt.stop()
     socketio.emit("transcript_partial_clear")
     for seg in final_segments:
-        line = {
-            "index": len(transcript_lines),
-            "text": seg["text"],
-            "timestamp": time.strftime("%H:%M:%S"),
-            "language": seg.get("language", ""),
-        }
-        transcript_lines.append(line)
+        with _transcript_lock:
+            line = {
+                "index": len(transcript_lines),
+                "text": seg["text"],
+                "timestamp": time.strftime("%H:%M:%S"),
+                "language": seg.get("language", ""),
+            }
+            transcript_lines.append(line)
         socketio.emit("transcript_update", line)
 
         idx = line["index"]
@@ -394,8 +402,9 @@ def _proofread_line(index: int, original_text: str):
     """背景校對單行逐字稿"""
     proofread = proofread_text(original_text)
     if proofread and not proofread.startswith("[錯誤]"):
-        if index < len(transcript_lines):
-            transcript_lines[index]["proofread"] = proofread
+        with _transcript_lock:
+            if index < len(transcript_lines):
+                transcript_lines[index]["proofread"] = proofread
         socketio.emit("proofread_update", {
             "index": index,
             "original": original_text,
