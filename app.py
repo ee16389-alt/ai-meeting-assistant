@@ -459,7 +459,7 @@ def _generate_summary(mode: str, full_text: str):
         )
     elif mode == "key_points":
         line_count = len([l for l in full_text.splitlines() if l.strip()])
-        n_points = max(2, min(100, line_count // 2))
+        n_points = max(3, min(100, line_count))
         system_prompt = (
             "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
             f"以條列式呈現，每個重點用「•」開頭，根據內容豐富度列出約 {n_points} 點。"

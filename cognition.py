@@ -718,7 +718,7 @@ def summarize_full(text: str) -> str:
 def summarize_key_points(text: str) -> str:
     """重點條列摘要（數量依逐字稿行數動態決定，最多 100 點）"""
     line_count = len([l for l in text.splitlines() if l.strip()])
-    n_points = max(2, min(100, line_count // 2))
+    n_points = max(3, min(100, line_count))
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
