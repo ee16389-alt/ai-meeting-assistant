@@ -398,9 +398,14 @@ def handle_export_summary(data):
     meeting_name = data.get("meeting_name", "").strip()
     mode = data.get("mode", "full")
     transcript_override = data.get("transcript_override", "").strip()
+    summary_overrides = {
+        "full": data.get("summary_full", "").strip(),
+        "key_points": data.get("summary_key", "").strip(),
+        "action_items": data.get("summary_action", "").strip(),
+    }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    socketio.start_background_task(_export_summary, meeting_name, mode, transcript_override)
+    socketio.start_background_task(_export_summary, meeting_name, mode, transcript_override, summary_overrides)
 
 
 # ── 背景任務 ───────────────────────────────────────────
@@ -489,36 +494,32 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
 
     transcript_content = "\n".join(transcript_lines_out)
 
-    # 處理摘要內容：優先使用前端傳來的快取內容
+    # 處理摘要內容：僅使用前端傳來的快取內容，不在匯出時阻塞 LLM 重新推論
     if summary_overrides and summary_overrides.get("full"):
         summary_full = summary_overrides["full"]
-        summary_key = summary_overrides["key_points"]
-        summary_actions = summary_overrides["action_items"]
-    elif full_text.strip():
-        # 如果前端沒傳摘要且逐字稿不為空，才進行推論
-        from cognition import summarize_all_in_one
-        combo = summarize_all_in_one(full_text)
-        summary_full = combo["full"]
-        summary_key = combo["key_points"]
-        summary_actions = combo["action_items"]
+        summary_key = summary_overrides.get("key_points", "")
+        summary_actions = summary_overrides.get("action_items", "")
     else:
-        summary_full = "無內容可供摘要"
-        summary_key = summary_full
-        summary_actions = summary_full
+        summary_full = ""
+        summary_key = ""
+        summary_actions = ""
 
     summary_lines = []
     summary_lines.append(f"會議名稱: {meeting_name}")
     summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     summary_lines.append("=" * 50)
     summary_lines.append("")
-    summary_lines.append("【全文摘要】")
-    summary_lines.append(summary_full)
-    summary_lines.append("")
-    summary_lines.append("【重點條列】")
-    summary_lines.append(summary_key)
-    summary_lines.append("")
-    summary_lines.append("【待辦清單】")
-    summary_lines.append(summary_actions)
+    if summary_full or summary_key or summary_actions:
+        summary_lines.append("【全文摘要】")
+        summary_lines.append(summary_full or "（未生成）")
+        summary_lines.append("")
+        summary_lines.append("【重點條列】")
+        summary_lines.append(summary_key or "（未生成）")
+        summary_lines.append("")
+        summary_lines.append("【待辦清單】")
+        summary_lines.append(summary_actions or "（未生成）")
+    else:
+        summary_lines.append("（摘要尚未生成，請在主畫面點選摘要按鈕後再次匯出）")
     summary_content = "\n".join(summary_lines)
 
     # 寫入檔案
@@ -526,10 +527,14 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
     os.makedirs(export_dir, exist_ok=True)
     transcript_path = os.path.join(export_dir, "transcript.txt")
     summary_path = os.path.join(export_dir, "summary.txt")
-    with open(transcript_path, "w", encoding="utf-8") as f:
-        f.write(transcript_content)
-    with open(summary_path, "w", encoding="utf-8") as f:
-        f.write(summary_content)
+    try:
+        with open(transcript_path, "w", encoding="utf-8") as f:
+            f.write(transcript_content)
+        with open(summary_path, "w", encoding="utf-8") as f:
+            f.write(summary_content)
+    except Exception as e:
+        socketio.emit("error", {"message": f"匯出失敗：{e}"})
+        return
 
     socketio.emit("export_ready", {
         "files": [
@@ -545,8 +550,8 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
     })
 
 
-def _export_summary(meeting_name: str, mode: str, transcript_override: str = ""):
-    """背景匯出摘要"""
+def _export_summary(meeting_name: str, mode: str, transcript_override: str = "", summary_overrides: dict = None):
+    """背景匯出摘要（優先使用前端快取，避免重複推論）"""
     if transcript_override:
         full_text = transcript_override
     else:
@@ -554,28 +559,39 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "")
             line.get("proofread", line["text"]) for line in transcript_lines
         )
 
+    cached = summary_overrides or {}
+    # 判斷是否有足夠的快取內容直接使用
+    has_cache = any(cached.get(k) for k in ("full", "key_points", "action_items"))
+
     summary_content = ""
-    if full_text.strip():
-        combo = summarize_all_in_one(full_text)
-        
+    if has_cache or full_text.strip():
+        if not has_cache:
+            # 快取不足時才執行 LLM 推論
+            try:
+                combo = summarize_all_in_one(full_text)
+                cached = {"full": combo["full"], "key_points": combo["key_points"], "action_items": combo["action_items"]}
+            except Exception as e:
+                socketio.emit("error", {"message": f"摘要生成失敗，無法匯出：{e}"})
+                return
+
         summary_lines = []
         summary_lines.append(f"會議名稱: {meeting_name}")
         summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         summary_lines.append("=" * 50)
         summary_lines.append("")
-        
-        if mode in ("full", "all"):
+
+        if mode in ("full", "all") and cached.get("full"):
             summary_lines.append("【全文摘要】")
-            summary_lines.append(combo["full"])
+            summary_lines.append(cached["full"])
             summary_lines.append("")
-        if mode in ("key_points", "all"):
+        if mode in ("key_points", "all") and cached.get("key_points"):
             summary_lines.append("【重點條列】")
-            summary_lines.append(combo["key_points"])
+            summary_lines.append(cached["key_points"])
             summary_lines.append("")
-        if mode in ("action_items", "all"):
+        if mode in ("action_items", "all") and cached.get("action_items"):
             summary_lines.append("【待辦清單】")
-            summary_lines.append(combo["action_items"])
-            
+            summary_lines.append(cached["action_items"])
+
         summary_content = "\n".join(summary_lines)
     else:
         summary_content = "尚無內容可供匯出"

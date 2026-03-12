@@ -664,7 +664,7 @@ def _call_ollama_chat(system_prompt: str, user_prompt: str) -> str:
 
 
 def proofread_text(text: str) -> str:
-    """修正 STT 逐字稿的錯字、同音字、標點"""
+    """修正 STT 逐字稿的錯字、同音字、標點（若模型繁忙則跳過）"""
     system_prompt = (
         "你是一位專業的繁體中文文字校對員。"
         "請修正以下語音辨識逐字稿中的錯字、同音字誤判和標點符號錯誤。"
@@ -672,7 +672,33 @@ def proofread_text(text: str) -> str:
         "如果文字已經正確，直接輸出原文。"
         + COMMON_OUTPUT_GUARDRAILS
     )
-    return _call_model(system_prompt, text)
+    # 非阻塞模式：若 LLM 鎖忙碌超過 3 秒則放棄此次校對，避免與摘要任務互搶
+    if _local_model_available():
+        llm = _load_local_llm()
+        if llm is None:
+            return _call_ollama(system_prompt, text)
+        if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=3.0):
+            return ""   # 模型繁忙，跳過此段校對
+        try:
+            resp = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                temperature=TEMPERATURE,
+                max_tokens=min(len(text) * 2 + 64, 256),
+            )
+            return (
+                resp.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+        except Exception:
+            return ""
+        finally:
+            _LOCAL_LLM_LOCK.release()
+    return _call_ollama(system_prompt, text)
 
 
 def summarize_full(text: str) -> str:

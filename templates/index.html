@@ -378,15 +378,36 @@
                 <button onclick="exportMeeting()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-lg shadow-orange-500/30">
                     <i data-lucide="download" class="w-4 h-4"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
                 </button>
-                <div class="relative">
-                    <i data-lucide="file-down" class="w-4 h-4 text-white absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
-                    <i data-lucide="chevron-down" class="w-4 h-4 text-white absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-90"></i>
-                    <select id="summary-export-mode" class="bg-emerald-600 hover:bg-emerald-500 text-white text-sm pl-10 pr-10 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-300 transition-all border border-emerald-600/40 appearance-none">
-                        <option class="text-slate-900" value="full" data-i18n="export_full">匯出全文摘要</option>
-                        <option class="text-slate-900" value="key_points" data-i18n="export_key">匯出重點條列</option>
-                        <option class="text-slate-900" value="action_items" data-i18n="export_action">匯出待辦清單</option>
-                        <option class="text-slate-900" value="all" data-i18n="export_all">匯出全部摘要</option>
-                    </select>
+                <div class="relative" id="export-summary-wrap">
+                    <button id="export-summary-btn" onclick="toggleExportSummaryMenu()"
+                        class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm transition-all border border-emerald-600/40 h-[38px]">
+                        <i data-lucide="file-down" class="w-4 h-4 flex-shrink-0"></i>
+                        <span data-i18n="export_summary">匯出摘要</span>
+                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 opacity-80 flex-shrink-0"></i>
+                    </button>
+                    <div id="export-summary-menu" class="hidden absolute right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden" style="min-width:172px">
+                        <button onclick="exportSummary('full')"
+                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
+                            <i data-lucide="align-left" class="w-4 h-4 flex-shrink-0"></i>
+                            <span data-i18n="export_full">匯出全文摘要</span>
+                        </button>
+                        <button onclick="exportSummary('key_points')"
+                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
+                            <i data-lucide="list" class="w-4 h-4 flex-shrink-0"></i>
+                            <span data-i18n="export_key">匯出重點條列</span>
+                        </button>
+                        <button onclick="exportSummary('action_items')"
+                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
+                            <i data-lucide="check-square" class="w-4 h-4 flex-shrink-0"></i>
+                            <span data-i18n="export_action">匯出待辦清單</span>
+                        </button>
+                        <div class="border-t border-slate-100 my-0.5"></div>
+                        <button onclick="exportSummary('all')"
+                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
+                            <i data-lucide="layers" class="w-4 h-4 flex-shrink-0"></i>
+                            <span data-i18n="export_all">匯出全部摘要</span>
+                        </button>
+                    </div>
                 </div>
                 <button id="open-storage-btn" onclick="openStorageFolder()" class="h-[42px] flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg text-sm transition-all border border-emerald-200 whitespace-nowrap">
                     <i data-lucide="folder-open" class="w-4 h-4"></i> <span data-i18n="open_storage_folder">開啟存放資料夾</span>
@@ -989,8 +1010,8 @@
             if (processor) {
                 try {
                     processor.disconnect();
+                    if (processor.port) processor.port.onmessage = null;
                 } catch (_) {}
-                processor.onaudioprocess = null;
                 processor = null;
             }
             if (audioSourceNode) {
@@ -1241,12 +1262,27 @@
                 }
 
                 if (!processor) {
-                    // 使用 4096 緩衝大小
-                    processor = audioContext.createScriptProcessor(4096, 1, 1);
+                    // AudioWorklet 取代廢棄的 createScriptProcessor，在獨立音頻執行緒處理
+                    const workletSrc = `
+class PCMCaptureProcessor extends AudioWorkletProcessor {
+    constructor() { super(); this._buf = []; }
+    process(inputs) {
+        const ch = inputs[0] && inputs[0][0];
+        if (ch) for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
+        if (this._buf.length >= 4096) this.port.postMessage(new Float32Array(this._buf.splice(0, 4096)));
+        return true;
+    }
+}
+registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
+                    const blob = new Blob([workletSrc], { type: 'application/javascript' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    await audioContext.audioWorklet.addModule(blobUrl);
+                    URL.revokeObjectURL(blobUrl);
 
-                    processor.onaudioprocess = (e) => {
+                    processor = new AudioWorkletNode(audioContext, 'pcm-capture-processor');
+                    processor.port.onmessage = (e) => {
                         if (!isRecording || !recordingSessionReady || !socket.connected) return;
-                        const input = e.inputBuffer.getChannelData(0);
+                        const input = e.data;
                         // 強制降頻至 16000 Hz
                         const downsampled = downsampleBuffer(input, audioContext.sampleRate, 16000);
                         const pcm16 = floatTo16BitPCM(downsampled);
@@ -1620,20 +1656,27 @@
 
         function downsampleBuffer(buffer, inputRate, outputRate) {
             if (outputRate === inputRate) return buffer;
-            const ratio = inputRate / outputRate;
-            const newLength = Math.round(buffer.length / ratio);
+            const M = inputRate / outputRate;              // 降頻倍率
+            const newLength = Math.floor(buffer.length / M);
             const result = new Float32Array(newLength);
-            let offset = 0;
+            // Hann 窗 sinc FIR 低通濾波，截止頻率 = outputRate/2，避免混疊失真
+            const halfLen = Math.ceil(M * 8);              // 濾波器半長（輸入樣本數）
+            const fc = 1.0 / M;                            // 正規化截止頻率
+            const pifc = Math.PI * fc;
             for (let i = 0; i < newLength; i++) {
-                const nextOffset = Math.round((i + 1) * ratio);
+                const center = i * M;
                 let sum = 0;
-                let count = 0;
-                for (let j = offset; j < nextOffset && j < buffer.length; j++) {
-                    sum += buffer[j];
-                    count++;
+                const kStart = Math.max(0, Math.floor(center) - halfLen);
+                const kEnd   = Math.min(buffer.length - 1, Math.floor(center) + halfLen);
+                for (let k = kStart; k <= kEnd; k++) {
+                    const t = k - center;
+                    const x = pifc * t;
+                    const sinc = Math.abs(x) < 1e-9 ? 1.0 : Math.sin(x) / x;
+                    const absT = Math.abs(t);
+                    const win  = absT <= halfLen ? 0.5 * (1.0 + Math.cos(Math.PI * absT / halfLen)) : 0.0;
+                    sum += buffer[k] * fc * sinc * win;
                 }
-                result[i] = count ? sum / count : 0;
-                offset = nextOffset;
+                result[i] = Math.max(-1.0, Math.min(1.0, sum));
             }
             return result;
         }
@@ -1925,9 +1968,19 @@
             });
         }
 
-        function exportSummary(modeOverride) {
+        function toggleExportSummaryMenu() {
+            const menu = document.getElementById('export-summary-menu');
+            if (menu) menu.classList.toggle('hidden');
+        }
+
+        function closeExportSummaryMenu() {
+            const menu = document.getElementById('export-summary-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        function exportSummary(mode) {
+            closeExportSummaryMenu();
             const meetingName = document.getElementById('meeting-name').value.trim();
-            const mode = modeOverride || (document.getElementById('summary-export-mode')?.value || 'full');
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_summary'));
@@ -1937,10 +1990,15 @@
                 showToast(t('alert_need_summary_export'));
                 return;
             }
+            showToast('正在匯出，請稍候...');
+            // 傳送前端已快取的摘要，後端直接寫檔不需重新推論
             socket.emit('export_summary', {
                 meeting_name: meetingName,
                 mode: mode,
                 transcript_override: transcriptText,
+                summary_full: summaryCache.full || '',
+                summary_key: summaryCache.key_points || '',
+                summary_action: summaryCache.action_items || '',
             });
         }
 
@@ -2076,12 +2134,11 @@
             });
         }
 
-        const summaryExportEl = document.getElementById('summary-export-mode');
-        if (summaryExportEl) {
-            summaryExportEl.addEventListener('change', () => {
-                exportSummary(summaryExportEl.value);
-            });
-        }
+        // 點選下拉選單外部時關閉
+        document.addEventListener('click', (e) => {
+            const wrap = document.getElementById('export-summary-wrap');
+            if (wrap && !wrap.contains(e.target)) closeExportSummaryMenu();
+        });
 
         const langSelectEl = document.getElementById('lang-select');
         if (langSelectEl) {

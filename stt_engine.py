@@ -305,10 +305,11 @@ class STTEngine:
             rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
             self._last_audio_rms = rms
             
-            # 靜音過濾：如果音量太小，不加入緩衝區，避免 AI 產生幻覺
+            # 靜音過濾：以零值音頻替換噪音，維持串流連續性並避免幻覺
             if rms < self.SILENCE_THRESHOLD:
+                self._pcm_buffer = np.concatenate([self._pcm_buffer, np.zeros(pcm32.size, dtype=np.float32)])
                 return
-                
+
             self._pcm_buffer = np.concatenate([self._pcm_buffer, pcm32])
         except Exception as e:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)
@@ -317,6 +318,14 @@ class STTEngine:
         return self._decode_buffer(finalize=False)
 
     def _transcribe_remaining(self, finalize: bool = False) -> list[dict]:
+        if finalize and self._pcm_buffer.size > 0:
+            # 裁剪尾端靜音（零值），避免最終解碼等待大量無聲音頻
+            nz = np.nonzero(self._pcm_buffer)[0]
+            if nz.size > 0:
+                keep = min(int(nz[-1]) + self.SAMPLE_RATE // 2, self._pcm_buffer.size)
+                self._pcm_buffer = self._pcm_buffer[:keep]
+            else:
+                self._pcm_buffer = np.array([], dtype=np.float32)
         if self._pcm_buffer.size == 0 and not finalize:
             return []
         return self._decode_buffer(finalize=finalize)
@@ -340,7 +349,7 @@ class STTEngine:
                     self._recognizer.decode_stream(self._stream)
 
             results = []
-            current_text = _to_traditional(self._recognizer.get_result(self._stream).strip())
+            current_text = self._recognizer.get_result(self._stream).strip()
             should_emit = False
 
             if finalize:
@@ -363,10 +372,11 @@ class STTEngine:
             return []
 
     def _make_segment(self, text: str) -> dict | None:
-        # 重複字詞過濾邏輯：移除連續出現 3 次以上的單字
+        # 重複字詞過濾：單字符 3+ 次重複、詞語 3+ 次重複
         if len(text) > 3:
             import re
-            text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+            text = re.sub(r'(.)\1{2,}', r'\1\1', text)           # 嗯嗯嗯嗯 → 嗯嗯
+            text = re.sub(r'(.{2,8})\1{2,}', r'\1', text)        # 然後然後然後 → 然後
 
         text = _to_traditional(text.strip())
         if not text:
