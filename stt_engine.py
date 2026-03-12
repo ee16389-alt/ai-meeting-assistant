@@ -331,7 +331,7 @@ class STTEngine:
                     self._recognizer.decode_stream(self._stream)
 
             results = []
-            current_text = self._recognizer.get_result(self._stream).strip()
+            current_text = _to_traditional(self._recognizer.get_result(self._stream).strip())
             should_emit = False
 
             if finalize:
