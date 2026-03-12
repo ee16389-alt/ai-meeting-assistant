@@ -280,11 +280,10 @@ class STTEngine:
             num_threads=max(1, (os.cpu_count() or 4) - 1),
             sample_rate=self.SAMPLE_RATE,
             provider="cpu",
-            decoding_method="modified_beam_search",
-            max_active_paths=8,
+            decoding_method="greedy_search",
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=0.4,
-            rule2_min_trailing_silence=0.3,
+            rule1_min_trailing_silence=1.2,
+            rule2_min_trailing_silence=0.8,
             rule3_min_utterance_length=20.0,
         )
 
@@ -293,7 +292,7 @@ class STTEngine:
             return 0
         return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
 
-    SILENCE_THRESHOLD = 0.012  # 更激進的靜音門檻：過濾背景風扇、冷氣聲
+    SILENCE_THRESHOLD = 0.003  # 恢復較低門檻，避免漏字
 
     def _append_pcm_chunk(self, chunk: bytes) -> None:
         try:
