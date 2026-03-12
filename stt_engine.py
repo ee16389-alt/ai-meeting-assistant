@@ -283,8 +283,8 @@ class STTEngine:
             decoding_method="modified_beam_search",
             max_active_paths=8,
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=0.6,
-            rule2_min_trailing_silence=0.4,
+            rule1_min_trailing_silence=0.4,
+            rule2_min_trailing_silence=0.3,
             rule3_min_utterance_length=20.0,
         )
 
@@ -293,7 +293,7 @@ class STTEngine:
             return 0
         return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
 
-    SILENCE_THRESHOLD = 0.005  # 靜音門檻：低於此音量不處理
+    SILENCE_THRESHOLD = 0.012  # 更激進的靜音門檻：過濾背景風扇、冷氣聲
 
     def _append_pcm_chunk(self, chunk: bytes) -> None:
         try:
@@ -364,6 +364,11 @@ class STTEngine:
             return []
 
     def _make_segment(self, text: str) -> dict | None:
+        # 重複字詞過濾邏輯：移除連續出現 3 次以上的單字
+        if len(text) > 3:
+            import re
+            text = re.sub(r'(.)\1{2,}', r'\1\1', text)
+
         text = _to_traditional(text.strip())
         if not text:
             return None
