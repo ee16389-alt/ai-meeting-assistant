@@ -382,18 +382,20 @@ def handle_open_storage_folder(data=None):
 @socketio.on("export_meeting")
 def handle_export(data):
     meeting_name = data.get("meeting_name", "").strip()
+    transcript_override = data.get("transcript_override", "").strip()
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    socketio.start_background_task(_export_meeting, meeting_name)
+    socketio.start_background_task(_export_meeting, meeting_name, transcript_override)
 
 
 @socketio.on("export_summary")
 def handle_export_summary(data):
     meeting_name = data.get("meeting_name", "").strip()
     mode = data.get("mode", "full")
+    transcript_override = data.get("transcript_override", "").strip()
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    socketio.start_background_task(_export_summary, meeting_name, mode)
+    socketio.start_background_task(_export_summary, meeting_name, mode, transcript_override)
 
 
 # ── 背景任務 ───────────────────────────────────────────
@@ -441,11 +443,14 @@ def _generate_summary(mode: str, full_text: str):
         socketio.emit("summary_result", {"mode": "all", "content": full_all_text})
 
 
-def _export_meeting(meeting_name: str):
+def _export_meeting(meeting_name: str, transcript_override: str = ""):
     """背景匯出逐字稿與摘要"""
-    full_text = "\n".join(
-        line.get("proofread", line["text"]) for line in transcript_lines
-    )
+    if transcript_override:
+        full_text = transcript_override
+    else:
+        full_text = "\n".join(
+            line.get("proofread", line["text"]) for line in transcript_lines
+        )
 
     # 組合逐字稿內容
     transcript_lines_out = []
@@ -455,18 +460,23 @@ def _export_meeting(meeting_name: str):
     transcript_lines_out.append("")
     transcript_lines_out.append("【逐字稿】")
     transcript_lines_out.append("")
-    for item in transcript_lines:
-        ts = item.get("timestamp", "")
-        text = item.get("proofread", item["text"])
-        transcript_lines_out.append(f"[{ts}] {text}")
+    
+    if transcript_override:
+        transcript_lines_out.append(transcript_override)
+    else:
+        for item in transcript_lines:
+            ts = item.get("timestamp", "")
+            text = item.get("proofread", item["text"])
+            transcript_lines_out.append(f"[{ts}] {text}")
 
     transcript_content = "\n".join(transcript_lines_out)
 
-    # 生成摘要
+    # 使用快速合併摘要
     if full_text.strip():
-        summary_full = summarize_full(full_text)
-        summary_key = summarize_key_points(full_text)
-        summary_actions = extract_action_items(full_text)
+        combo = summarize_all_in_one(full_text)
+        summary_full = combo["full"]
+        summary_key = combo["key_points"]
+        summary_actions = combo["action_items"]
     else:
         summary_full = "[錯誤] 尚無逐字稿內容可供摘要"
         summary_key = summary_full
@@ -501,55 +511,50 @@ def _export_meeting(meeting_name: str):
         "files": [
             {
                 "filename": f"{meeting_name}_transcript.txt",
-                "content": transcript_content,
                 "saved_path": transcript_path,
             },
             {
                 "filename": f"{meeting_name}_summary.txt",
-                "content": summary_content,
                 "saved_path": summary_path,
             },
         ]
     })
 
 
-def _export_summary(meeting_name: str, mode: str):
+def _export_summary(meeting_name: str, mode: str, transcript_override: str = ""):
     """背景匯出摘要"""
-    full_text = "\n".join(
-        line.get("proofread", line["text"]) for line in transcript_lines
-    )
-    summary_full = ""
-    summary_key = ""
-    summary_actions = ""
-    if full_text.strip():
-        if mode in ("full", "all"):
-            summary_full = summarize_full(full_text)
-        if mode in ("key_points", "all"):
-            summary_key = summarize_key_points(full_text)
-        if mode in ("action_items", "all"):
-            summary_actions = extract_action_items(full_text)
+    if transcript_override:
+        full_text = transcript_override
     else:
-        summary_full = "[錯誤] 尚無逐字稿內容可供摘要"
-        summary_key = summary_full
-        summary_actions = summary_full
+        full_text = "\n".join(
+            line.get("proofread", line["text"]) for line in transcript_lines
+        )
 
-    summary_lines = []
-    summary_lines.append(f"會議名稱: {meeting_name}")
-    summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    summary_lines.append("=" * 50)
-    summary_lines.append("")
-    if mode in ("full", "all"):
-        summary_lines.append("【全文摘要】")
-        summary_lines.append(summary_full)
+    summary_content = ""
+    if full_text.strip():
+        combo = summarize_all_in_one(full_text)
+        
+        summary_lines = []
+        summary_lines.append(f"會議名稱: {meeting_name}")
+        summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        summary_lines.append("=" * 50)
         summary_lines.append("")
-    if mode in ("key_points", "all"):
-        summary_lines.append("【重點條列】")
-        summary_lines.append(summary_key)
-        summary_lines.append("")
-    if mode in ("action_items", "all"):
-        summary_lines.append("【待辦清單】")
-        summary_lines.append(summary_actions)
-    summary_content = "\n".join(summary_lines)
+        
+        if mode in ("full", "all"):
+            summary_lines.append("【全文摘要】")
+            summary_lines.append(combo["full"])
+            summary_lines.append("")
+        if mode in ("key_points", "all"):
+            summary_lines.append("【重點條列】")
+            summary_lines.append(combo["key_points"])
+            summary_lines.append("")
+        if mode in ("action_items", "all"):
+            summary_lines.append("【待辦清單】")
+            summary_lines.append(combo["action_items"])
+            
+        summary_content = "\n".join(summary_lines)
+    else:
+        summary_content = "尚無內容可供匯出"
 
     export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
@@ -561,7 +566,6 @@ def _export_summary(meeting_name: str, mode: str):
         "files": [
             {
                 "filename": f"{meeting_name}_summary.txt",
-                "content": summary_content,
                 "saved_path": summary_path,
             },
         ]
