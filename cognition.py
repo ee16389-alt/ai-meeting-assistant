@@ -188,10 +188,12 @@ def _load_local_llm():
         return None
 
     try:
+        # 優化：調整執行緒為物理核心數，並增加 n_batch 加快讀取速度
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
-            n_threads=max(1, (os.cpu_count() or 4) - 1),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(max(1, (os.cpu_count() or 4) // 2)))),
+            n_batch=512,
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
@@ -199,6 +201,45 @@ def _load_local_llm():
     except Exception as e:
         _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 載入失敗: {e}"
         return None
+
+
+def _call_model_stream(system_prompt: str, user_prompt: str):
+    """串流輸出模式，讓前端能即時看到字。"""
+    llm = _load_local_llm()
+    if llm is None:
+        yield f"[錯誤] {_LOCAL_LLM_LOAD_ERROR or '本地模型未就緒'}"
+        return
+
+    with _LOCAL_LLM_LOCK:
+        try:
+            # 優先嘗試 Chat 模式
+            stream = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=TEMPERATURE,
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta:
+                    yield delta
+        except Exception:
+            # Fallback 模式
+            prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}\n\nAssistant:\n"
+            stream = llm.create_completion(
+                prompt=prompt,
+                temperature=TEMPERATURE,
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                stop=["User:", "\nSystem:"],
+                stream=True,
+            )
+            for chunk in stream:
+                text = chunk.get("choices", [{}])[0].get("text", "")
+                if text:
+                    yield text
 
 
 def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:

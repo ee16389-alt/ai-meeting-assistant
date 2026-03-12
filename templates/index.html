@@ -851,6 +851,43 @@
             updateProofread(data.index, data.proofread);
         });
 
+        socket.on('summary_start', (data) => {
+            const container = document.getElementById('summary-container');
+            if (summaryViewMode === 'all') {
+                renderAllSummarySkeleton(); // 先顯示骨架
+            } else {
+                container.innerHTML = `
+                    <div id="summary-stream-${data.mode}" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap"></div>
+                `;
+            }
+        });
+
+        socket.on('summary_chunk', (data) => {
+            let target;
+            if (summaryViewMode === 'all') {
+                // 如果是「全部摘要」，目前先顯示在一個大框框內，或者嘗試拆解。
+                // 為了簡單起見，我們先顯示在當前選取的 mode 框
+                target = document.getElementById(`summary-stream-${data.mode}`);
+                if (!target && data.mode === 'all') {
+                    // 如果是 mode=all，直接顯示在 container
+                    const container = document.getElementById('summary-container');
+                    target = document.getElementById('summary-stream-all');
+                    if (!target) {
+                        container.innerHTML = '<div id="summary-stream-all" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap"></div>';
+                        target = document.getElementById('summary-stream-all');
+                    }
+                }
+            } else {
+                target = document.getElementById(`summary-stream-${data.mode}`);
+            }
+            
+            if (target) {
+                target.textContent += data.chunk;
+                const container = document.getElementById('summary-container');
+                container.scrollTop = container.scrollHeight;
+            }
+        });
+
         socket.on('summary_result', (data) => {
             endSummaryRequest();
             summaryCache[data.mode] = data.content;

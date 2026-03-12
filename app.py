@@ -415,32 +415,44 @@ def _proofread_line(index: int, original_text: str):
 
 
 def _generate_summary(mode: str, full_text: str):
-    """背景生成摘要"""
+    """背景生成摘要（支援串流）"""
+    system_prompt = ""
     if mode == "full":
-        content = summarize_full(full_text)
-        socketio.emit("summary_result", {"mode": mode, "content": content})
-    elif mode == "key_points":
-        content = summarize_key_points(full_text)
-        socketio.emit("summary_result", {"mode": mode, "content": content})
-    elif mode == "action_items":
-        content = extract_action_items(full_text)
-        socketio.emit("summary_result", {"mode": mode, "content": content})
-    elif mode == "all":
-        # 優化：合併一次推論，速度提升 3 倍
-        combo = summarize_all_in_one(full_text)
-        
-        # 發送各個部分的結果回前端
-        socketio.emit("summary_result", {"mode": "full", "content": combo["full"]})
-        socketio.emit("summary_result", {"mode": "key_points", "content": combo["key_points"]})
-        socketio.emit("summary_result", {"mode": "action_items", "content": combo["action_items"]})
-        
-        # 也發送一個整體的 "all" 供相容性使用
-        full_all_text = (
-            f"【全文摘要】\n{combo['full']}\n\n"
-            f"【重點條列】\n{combo['key_points']}\n\n"
-            f"【待辦清單】\n{combo['action_items']}"
+        system_prompt = (
+            "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
+            "請輸出 2-4 句話的精簡摘要，整理主要脈絡、重點與結論。"
         )
-        socketio.emit("summary_result", {"mode": "all", "content": full_all_text})
+    elif mode == "key_points":
+        system_prompt = (
+            "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
+            "以條列式呈現，每個重點用「•」開頭，列出 3-5 點。"
+        )
+    elif mode == "action_items":
+        system_prompt = (
+            "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
+            "只列出明確提到的具體行動項目，格式為「- [ ] 行動內容」。"
+        )
+    elif mode == "all":
+        system_prompt = (
+            "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
+            "請一次性提供以下內容：\n"
+            "1. 【全文摘要】：精簡摘要。\n"
+            "2. 【重點條列】：3-5 個重點。\n"
+            "3. 【待辦清單】：具體行動項目。"
+        )
+
+    # 告訴前端準備開始串流
+    socketio.emit("summary_start", {"mode": mode})
+    
+    from cognition import _call_model_stream
+    accumulated = ""
+    for chunk in _call_model_stream(system_prompt, full_text):
+        accumulated += chunk
+        socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
+    
+    # 最終傳送完整結果以供快取
+    socketio.emit("summary_result", {"mode": mode, "content": accumulated})
+    end_summary_request()
 
 
 def _export_meeting(meeting_name: str, transcript_override: str = ""):
