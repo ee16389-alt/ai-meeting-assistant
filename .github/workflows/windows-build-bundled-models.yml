@@ -64,7 +64,10 @@ jobs:
                 throw "gdown failed for ${Label}. If this is a Google Drive file, set sharing to 'Anyone with the link (Viewer)' and use a direct URL."
               }
             } else {
-              Invoke-WebRequest -Uri $Url -OutFile $OutFile
+              curl.exe -L --retry 3 --retry-delay 5 -o "$OutFile" "$Url"
+              if ($LASTEXITCODE -ne 0) {
+                throw "curl failed for ${Label} (exit $LASTEXITCODE)"
+              }
             }
 
             if (-not (Test-Path $OutFile)) {
