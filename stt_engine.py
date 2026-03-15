@@ -291,6 +291,10 @@ class STTEngine:
             self._silence_ms = 0
             self._last_partial_text = ""
 
+        # 若 buffer 全為靜音（無有效語音），直接跳過避免幻覺
+        if np.max(np.abs(audio)) < self.SILENCE_THRESHOLD:
+            return []
+
         # 鎖外執行推論，不阻塞其他 feed_audio
         return self._do_transcribe(audio)
 
