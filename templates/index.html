@@ -1039,6 +1039,7 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
+                meetingInput.focus();
                 return;
             }
             if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
@@ -1080,6 +1081,7 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
+                meetingInput.focus();
                 isBusy = false;
                 return;
             }
@@ -1137,6 +1139,7 @@
                 lastCompletedMeetingName = '';
                 isRecording = true;
                 meetingInput.disabled = true;
+                document.getElementById('save-audio').disabled = true;
 
                 // 清空逐字稿區域
                 const container = document.getElementById('transcript-container');

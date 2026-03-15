@@ -49,7 +49,7 @@ TAIWAN_PROMPT = "以下是台灣繁體中文會議紀錄，包含商業術語與
 
 # Whisper 常見幻覺句（靜音時模型虛構的輸出，或 prompt 回音）
 _HALLUCINATION_PATTERNS = re.compile(
-    r"(thank you for watching|字幕由|請訂閱|掌聲|♪|♫|music|ambient|"
+    r"(thank you for watching|字幕由|請訂閱|訂閱頻道|點讚|不吝|掌聲|♪|♫|music|ambient|"
     r"by\s+\w+\s+caption|subtitles?\s+by|"
     r"台灣繁體中文會議紀錄|包含商業術語與英文詞彙|以下是台灣|"
     r"翻譯中|翻唱中|字幕製作)",
@@ -366,6 +366,14 @@ class STTEngine:
     @staticmethod
     def _filter_repetitions(text: str) -> str:
         if len(text) > 3:
-            text = re.sub(r'(.)\1{2,}', r'\1\1', text)           # 嗯嗯嗯嗯 → 嗯嗯
-            text = re.sub(r'(.{2,8})\1{2,}', r'\1', text)        # 然後然後然後 → 然後
+            text = re.sub(r'(.)\1{2,}', r'\1\1', text)            # 嗯嗯嗯嗯 → 嗯嗯
+            text = re.sub(r'(.{2,20})\1{2,}', r'\1', text)        # 在於英文文化的大臺… → 一次
+            # 若整段仍由單一短語高密度重複組成，整段丟棄
+            for length in range(3, min(len(text) // 3 + 1, 21)):
+                phrase = text[:length]
+                count = text.count(phrase)
+                if count >= 4:
+                    remainder = text.replace(phrase, '').replace('，', '').replace(',', '')
+                    if len(remainder) < length:
+                        return ''
         return text.strip()

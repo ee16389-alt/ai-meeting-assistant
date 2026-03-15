@@ -485,16 +485,11 @@ def _normalize_action_items_result(text: str, transcript: str) -> str:
         return "逐字稿資訊不足"
 
     normalized = []
-    source_lines = _meaningful_transcript_lines(transcript)
     for line in lines:
         body = _strip_summary_prefix(line)
         if not body:
             continue
         if _action_result_invalid(body):
-            continue
-        if not any(body in src or src in body for src in source_lines):
-            continue
-        if not any(body.startswith(prefix) for prefix in CHINESE_ACTION_PREFIXES):
             continue
         normalized.append(f"- [ ] {body}")
 
@@ -754,8 +749,8 @@ def summarize_all_in_one(text: str) -> dict:
         "請針對提供的逐字稿，一次性提供以下三個部分的內容：\n"
         "1. 【全文摘要】：用 2-4 句話精簡整理主要脈絡與結論。\n"
         "2. 【重點條列】：列出 3-5 個核心重點，以「•」開頭。\n"
-        "3. 【待辦清單】：列出具體行動項目，以「- [ ]」開頭。\n"
-        "規則：禁止照抄原文、禁止臆測、禁止輸出角色標籤。若資訊不足，請在該項標註「逐字稿資訊不足」。"
+        "3. 【待辦清單】：只列出明確指派的可執行任務，以「- [ ]」開頭；若無明確待辦事項，寫「無明確待辦事項」。\n"
+        "規則：禁止照抄原文、禁止臆測、禁止輸出角色標籤、禁止將觀念說明或背景資訊列為待辦。若資訊不足，請在該項標註「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
     
