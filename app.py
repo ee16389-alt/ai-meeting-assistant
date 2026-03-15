@@ -82,6 +82,22 @@ _stt_init_error = ""
 _stt_init_done = threading.Event()
 stt: STTEngine | _UnavailableSTT = _UnavailableSTT(Exception("STT 初始化中..."))
 
+# 後端診斷 log 緩衝（最多 100 行）
+_debug_logs: list[str] = []
+_debug_logs_lock = threading.Lock()
+
+_orig_print = print
+def _capturing_print(*args, **kwargs):
+    msg = " ".join(str(a) for a in args)
+    with _debug_logs_lock:
+        _debug_logs.append(msg)
+        if len(_debug_logs) > 100:
+            del _debug_logs[:-100]
+    _orig_print(*args, **kwargs)
+
+import builtins
+builtins.print = _capturing_print
+
 
 def _on_stt_segments(segments: list[dict]):
     """STT 背景 worker 完成推論後的回呼，透過 socketio 推送結果"""
@@ -175,6 +191,19 @@ def _open_folder(path: str) -> None:
 @app.route("/")
 def index():
     return send_from_directory(os.path.join(_base_path, "templates"), "index.html")
+
+
+@app.route("/api/debug")
+def api_debug():
+    with _debug_logs_lock:
+        logs = list(_debug_logs)
+    partial = stt.partial_text if hasattr(stt, "partial_text") else ""
+    queue_size = stt._audio_queue.qsize() if hasattr(stt, "_audio_queue") else -1
+    return {
+        "logs": logs[-50:],
+        "partial_text": partial,
+        "queue_size": queue_size,
+    }
 
 
 @app.route("/health")
