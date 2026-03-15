@@ -1,10 +1,9 @@
-"""感知層 - Faster-Whisper STT 引擎（medium int8，台灣腔中英混切）"""
+"""感知層 - Sherpa-ONNX 串流 STT 引擎（Paraformer-Bilingual，中英混切）"""
 
 from __future__ import annotations
 
 import json
 import os
-import queue
 import re
 import sys
 import threading
@@ -14,11 +13,11 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from faster_whisper import WhisperModel  # type: ignore
-    _fw_import_error = ""
+    import sherpa_onnx  # type: ignore
+    _so_import_error = ""
 except Exception as _e:
-    WhisperModel = None  # type: ignore[assignment]
-    _fw_import_error = str(_e)
+    sherpa_onnx = None  # type: ignore[assignment]
+    _so_import_error = str(_e)
 
 try:
     import opencc  # type: ignore
@@ -43,12 +42,7 @@ class State(Enum):
     STOPPED = "stopped"
 
 
-SPEAKER_GAP_THRESHOLD = 1.5
-
-# Whisper 初始提示：引導輸出繁體中文台灣用字，適應中英混切
-TAIWAN_PROMPT = "以下是台灣繁體中文會議紀錄，包含商業術語與英文詞彙。"
-
-# Whisper 常見幻覺句（靜音時模型虛構的輸出，或 prompt 回音）
+# Sherpa-ONNX 幻覺過濾
 _HALLUCINATION_PATTERNS = re.compile(
     r"(thank you for watching|字幕由|請訂閱|訂閱頻道|點讚|不吝|掌聲|♪|♫|music|ambient|"
     r"by\s+\w+\s+caption|subtitles?\s+by|"
@@ -58,7 +52,6 @@ _HALLUCINATION_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# 僅含標點或單一符號的幻覺（不含任何中英文字）
 _PUNCTUATION_ONLY = re.compile(r'^[\s\W]+$')
 
 
@@ -95,27 +88,34 @@ def _load_model_pack_config() -> dict:
     return {}
 
 
-def _find_whisper_model_dir() -> Path | None:
-    """尋找本地 Faster-Whisper 模型目錄（含 model.bin）"""
-    env_dir = os.environ.get("AMA_WHISPER_DIR", "").strip()
+def _has_encoder(p: Path) -> bool:
+    return (p / "encoder.int8.onnx").exists() or (p / "encoder.onnx").exists()
+
+
+def _find_sherpa_model_dir() -> Path | None:
+    """尋找本地 Sherpa-ONNX 模型目錄（含 encoder.int8.onnx 或 encoder.onnx）"""
+    env_dir = os.environ.get("AMA_SHERPA_DIR", "").strip()
     if env_dir:
         p = Path(env_dir).expanduser()
-        if p.is_dir() and (p / "model.bin").exists():
+        if p.is_dir() and _has_encoder(p):
             return p
 
     cfg = _load_model_pack_config()
-    model_dir_name = str(cfg.get("whisperModelDirName", "faster-whisper-medium")).strip()
+    model_dir_name = str(cfg.get(
+        "sherpaModelDirName",
+        "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+    )).strip()
 
     candidates: list[Path] = []
     resources = _resources_root()
     if resources:
-        candidates.append(resources / "models" / "whisper" / model_dir_name)
-        candidates.append(resources / "models" / "whisper")
+        candidates.append(resources / "models" / "sherpa-onnx" / model_dir_name)
+        candidates.append(resources / "models" / "sherpa-onnx")
 
     root = _project_root()
     for base in (
-        root / "desktop" / "models" / "whisper",
-        root / "models" / "whisper",
+        root / "desktop" / "models" / "sherpa-onnx",
+        root / "models" / "sherpa-onnx",
     ):
         candidates.append(base / model_dir_name)
         candidates.append(base)
@@ -132,18 +132,18 @@ def _find_whisper_model_dir() -> Path | None:
             if key in seen:
                 continue
             seen.add(key)
-            base = anc / "models" / "whisper"
+            base = anc / "models" / "sherpa-onnx"
             candidates.append(base / model_dir_name)
             candidates.append(base)
 
     for p in candidates:
         if not p.exists():
             continue
-        if p.is_dir() and (p / "model.bin").exists():
+        if p.is_dir() and _has_encoder(p):
             return p
         if p.is_dir():
             nested = sorted(
-                [d for d in p.iterdir() if d.is_dir() and (d / "model.bin").exists()]
+                [d for d in p.iterdir() if d.is_dir() and _has_encoder(d)]
             )
             if nested:
                 return nested[0]
@@ -153,49 +153,56 @@ def _find_whisper_model_dir() -> Path | None:
 class STTEngine:
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
-    TRANSCRIBE_INTERVAL_MS = 2000  # 固定每隔此時間觸發一次辨識
 
-    def __init__(self, model_size: str = "medium"):
-        if WhisperModel is None:
-            raise RuntimeError(f"faster_whisper 無法載入: {_fw_import_error}")
+    def __init__(self, model_size: str = "base"):
+        if sherpa_onnx is None:
+            raise RuntimeError(f"sherpa_onnx 無法載入: {_so_import_error}")
 
         self._lock = threading.Lock()
         self._state = State.IDLE
-        self._pcm_buffer = np.array([], dtype=np.float32)
-        self._time_offset_sec = 0.0
-        self._current_speaker = 1
-        self._last_segment_end = 0.0
         self._last_partial_text = ""
         self._last_confirmed_text = ""
+        self._last_audio_rms = 0.0
         self._result_callback = None
+        self._current_speaker = 1
+        self._last_segment_end = 0.0
+        self._time_offset_sec = 0.0
 
-        # 背景推論 worker：避免 Whisper 推論阻塞 SocketIO 事件迴圈
-        self._audio_queue: queue.Queue = queue.Queue(maxsize=2)
-        self._worker = threading.Thread(target=self._transcribe_worker, daemon=True)
-        self._worker.start()
+        self._recognizer = self._create_recognizer()
+        self._stream = self._recognizer.create_stream()
+        print("[STT] Sherpa-ONNX Paraformer 模型載入完成", flush=True)
 
-        self._model = self._create_model(model_size)
-        print("[STT] Faster-Whisper 模型載入完成", flush=True)
+    def _create_recognizer(self) -> "sherpa_onnx.OnlineRecognizer":
+        local_dir = _find_sherpa_model_dir()
+        if not local_dir:
+            raise RuntimeError(
+                "找不到 Sherpa-ONNX 模型目錄，請確認模型已安裝\n"
+                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-bilingual-zh-en）"
+            )
 
-    def _create_model(self, model_size: str) -> "WhisperModel":
-        local_dir = _find_whisper_model_dir()
-        if local_dir:
-            print(f"[STT] 使用本地模型: {local_dir}", flush=True)
-            model_path = str(local_dir)
-        else:
-            # 開發模式：自動從 HuggingFace 下載（由 HF_HOME 控制快取位置）
-            model_path = f"Systran/faster-whisper-{model_size}"
-            print(f"[STT] 本地模型未找到，下載 {model_path}", flush=True)
+        encoder = str(local_dir / "encoder.int8.onnx")
+        decoder = str(local_dir / "decoder.int8.onnx")
+        if not Path(encoder).exists():
+            encoder = str(local_dir / "encoder.onnx")
+            decoder = str(local_dir / "decoder.onnx")
+        tokens = str(local_dir / "tokens.txt")
 
         cpu_count = os.cpu_count() or 4
-        # 保留至少 2 個核心給 Flask/SocketIO，避免暫停/停止無反應
-        cpu_threads = max(2, min(6, cpu_count // 2))
-        return WhisperModel(
-            model_path,
-            device="cpu",
-            compute_type="int8",
-            num_workers=1,
-            cpu_threads=cpu_threads,
+        num_threads = max(2, min(4, cpu_count // 2))
+
+        print(f"[STT] 使用本地模型: {local_dir}", flush=True)
+        return sherpa_onnx.OnlineRecognizer.from_paraformer(
+            encoder=encoder,
+            decoder=decoder,
+            tokens=tokens,
+            num_threads=num_threads,
+            sample_rate=self.SAMPLE_RATE,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=2.4,
+            rule2_min_trailing_silence=1.2,
+            rule3_min_utterance_length=20,
         )
 
     # ── 屬性 ──────────────────────────────────────────────
@@ -221,14 +228,13 @@ class STTEngine:
         with self._lock:
             if self._state != State.IDLE:
                 return self._state.value
-            self._pcm_buffer = np.array([], dtype=np.float32)
-            self._time_offset_sec = 0.0
+            self._stream = self._recognizer.create_stream()
+            self._last_partial_text = ""
+            self._last_confirmed_text = ""
+            self._last_audio_rms = 0.0
             self._current_speaker = 1
             self._last_segment_end = 0.0
-            self._last_partial_text = ""
-            self._last_audio_rms = 0.0
-            self._silence_ms = 0
-            self._last_confirmed_text = ""
+            self._time_offset_sec = 0.0
             self._state = State.RECORDING
             return self._state.value
 
@@ -246,48 +252,30 @@ class STTEngine:
             self._state = State.RECORDING
             return self._state.value
 
-    def request_stop(self) -> np.ndarray:
-        """原子操作：立即設為 IDLE 並取走剩餘 buffer，供非同步最終轉寫。"""
+    def request_stop(self) -> None:
         with self._lock:
             if self._state not in (State.RECORDING, State.PAUSED):
-                return np.array([], dtype=np.float32)
-            remaining = self._pcm_buffer.copy()
-            self._pcm_buffer = np.array([], dtype=np.float32)
+                return
             self._state = State.IDLE
-            return remaining
+            stream = self._stream
+        # 送 tail padding 刷出最後一段
+        self._flush_stream(stream)
 
     def stop(self) -> tuple[str, list[dict]]:
-        """同步停止（相容舊介面）。"""
-        remaining = self.request_stop()
-        segments = self.transcribe_audio(remaining)
-        return "stopped", segments
+        self.request_stop()
+        return "stopped", []
 
     def reset(self):
         with self._lock:
-            self._pcm_buffer = np.array([], dtype=np.float32)
-            self._time_offset_sec = 0.0
-            self._current_speaker = 1
-            self._last_segment_end = 0.0
+            self._stream = self._recognizer.create_stream()
             self._last_partial_text = ""
             self._last_confirmed_text = ""
+            self._time_offset_sec = 0.0
             self._state = State.IDLE
 
     def set_result_callback(self, cb):
-        """設定辨識結果回呼，由背景執行緒呼叫"""
+        """設定辨識結果回呼，由推論執行緒呼叫"""
         self._result_callback = cb
-
-    def _transcribe_worker(self):
-        """背景執行緒：持續從佇列取音訊並執行 Whisper 推論"""
-        while True:
-            audio = self._audio_queue.get()
-            if audio is None:
-                break
-            results = self._do_transcribe(audio)
-            if results and self._result_callback:
-                try:
-                    self._result_callback(results)
-                except Exception as e:
-                    print(f"[STT] callback 錯誤: {e}", flush=True)
 
     # ── 音頻處理 ──────────────────────────────────────────
 
@@ -295,126 +283,89 @@ class STTEngine:
         with self._lock:
             if self._state != State.RECORDING:
                 return []
-            self._append_pcm_chunk(chunk)
-            duration_ms = self._get_buffer_duration_ms()
-            # 固定間隔觸發，不依賴靜音偵測（適合多人同時說話的場景）
-            if duration_ms < self.TRANSCRIBE_INTERVAL_MS:
-                return []
+            stream = self._stream  # 持鎖取得 stream 參考
 
-            audio = self._pcm_buffer.copy()
-            self._pcm_buffer = np.array([], dtype=np.float32)
-            self._last_partial_text = ""
-
-        # 若 buffer 全為靜音（無有效語音），直接跳過避免幻覺
-        if np.max(np.abs(audio)) < self.SILENCE_THRESHOLD:
-            return []
-
-        # 放入佇列由背景 worker 處理，立刻回傳不阻塞
-        # 若佇列滿（上一段還沒處理完），丟棄本次避免堆積
-        try:
-            self._audio_queue.put_nowait(audio)
-        except queue.Full:
-            print("[STT] 佇列已滿，略過本次音訊", flush=True)
-        return []
-
-    def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
-        """對外部傳入的 buffer 進行轉寫（供非同步 stop 使用）。"""
-        if audio.size == 0:
-            return []
-        # 裁剪尾端靜音
-        nz = np.nonzero(audio)[0]
-        if nz.size == 0:
-            return []
-        keep = min(int(nz[-1]) + self.SAMPLE_RATE // 2, audio.size)
-        audio = audio[:keep]
-        return self._do_transcribe(audio)
-
-    def _append_pcm_chunk(self, chunk: bytes) -> None:
         try:
             pcm16 = np.frombuffer(chunk, dtype=np.int16)
             if pcm16.size == 0:
-                return
-            pcm32 = pcm16.astype(np.float32) / 32768.0
-            rms = float(np.sqrt(np.mean(np.square(pcm32)))) if pcm32.size else 0.0
-            self._last_audio_rms = rms
-            if rms < self.SILENCE_THRESHOLD:
-                self._pcm_buffer = np.concatenate(
-                    [self._pcm_buffer, np.zeros(pcm32.size, dtype=np.float32)]
-                )
-                return
-            self._pcm_buffer = np.concatenate([self._pcm_buffer, pcm32])
+                return []
+            samples = pcm16.astype(np.float32) / 32768.0
         except Exception as e:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)
-
-    def _get_buffer_duration_ms(self) -> int:
-        if self._pcm_buffer.size == 0:
-            return 0
-        return int((self._pcm_buffer.size / self.SAMPLE_RATE) * 1000)
-
-    def _do_transcribe(self, audio: np.ndarray) -> list[dict]:
-        try:
-            segments_iter, info = self._model.transcribe(
-                audio,
-                language="zh",
-                beam_size=1,        # greedy search，速度提升 3-5x
-                best_of=1,
-                temperature=0.0,
-                initial_prompt=TAIWAN_PROMPT,
-                vad_filter=True,
-                vad_parameters=dict(
-                    min_silence_duration_ms=400,
-                    speech_pad_ms=200,
-                    threshold=0.5,
-                ),
-                condition_on_previous_text=False,  # 避免 prompt 回音
-                word_timestamps=False,
-            )
-
-            results = []
-            for seg in segments_iter:
-                text = seg.text.strip()
-                if not text or _HALLUCINATION_PATTERNS.search(text) or _PUNCTUATION_ONLY.match(text):
-                    continue
-                text = _to_traditional(text)
-                text = self._filter_repetitions(text)
-                if not text:
-                    continue
-                # 跨段去重：與上一段完全相同則跳過
-                if text == self._last_confirmed_text:
-                    continue
-                self._last_confirmed_text = text
-                if not text:
-                    continue
-
-                start = self._time_offset_sec + seg.start
-                end = self._time_offset_sec + seg.end
-                gap = start - self._last_segment_end
-                if self._last_segment_end > 0 and gap > SPEAKER_GAP_THRESHOLD:
-                    self._current_speaker += 1
-                self._last_segment_end = max(self._last_segment_end, end)
-
-                results.append({
-                    "text": text,
-                    "start": start,
-                    "end": end,
-                    "language": getattr(info, "language", "zh"),
-                    "speaker": self._current_speaker,
-                })
-
-            self._time_offset_sec += audio.size / self.SAMPLE_RATE
-            return results
-
-        except Exception as e:
-            print(f"[STT] Faster-Whisper 辨識錯誤: {e}", flush=True)
-            self._time_offset_sec += audio.size / self.SAMPLE_RATE
             return []
+
+        rms = float(np.sqrt(np.mean(np.square(samples))))
+        with self._lock:
+            self._last_audio_rms = rms
+
+        # 送入串流辨識器並解碼
+        stream.accept_waveform(self.SAMPLE_RATE, samples)
+        while self._recognizer.is_ready(stream):
+            self._recognizer.decode(stream)
+
+        result = self._recognizer.get_result(stream)
+        text = (result.text if hasattr(result, "text") else str(result)).strip()
+
+        if self._recognizer.is_endpoint(stream):
+            # 句子結束：觸發回呼並重置
+            if text:
+                self._emit_text(text)
+            self._recognizer.reset(stream)
+            with self._lock:
+                self._last_partial_text = ""
+        else:
+            with self._lock:
+                self._last_partial_text = _to_traditional(text) if text else ""
+
+        return []
+
+    def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
+        """相容舊介面（stop 時呼叫），sherpa-onnx 串流版不需要"""
+        return []
+
+    def _flush_stream(self, stream) -> None:
+        """送入 tail padding，刷出最後未送出的辨識結果"""
+        tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
+        stream.accept_waveform(self.SAMPLE_RATE, tail)
+        while self._recognizer.is_ready(stream):
+            self._recognizer.decode(stream)
+        result = self._recognizer.get_result(stream)
+        text = (result.text if hasattr(result, "text") else str(result)).strip()
+        if text:
+            self._emit_text(text)
+
+    def _emit_text(self, text: str) -> None:
+        text = _to_traditional(text)
+        text = self._filter_repetitions(text)
+        if not text:
+            return
+        if _HALLUCINATION_PATTERNS.search(text) or _PUNCTUATION_ONLY.match(text):
+            return
+        if text == self._last_confirmed_text:
+            return
+        self._last_confirmed_text = text
+
+        now = self._time_offset_sec
+        self._time_offset_sec += 1.0
+        segment = {
+            "text": text,
+            "start": now,
+            "end": now + 1.0,
+            "language": "zh",
+            "speaker": self._current_speaker,
+        }
+        if self._result_callback:
+            try:
+                self._result_callback([segment])
+            except Exception as e:
+                print(f"[STT] callback 錯誤: {e}", flush=True)
 
     @staticmethod
     def _filter_repetitions(text: str) -> str:
         if len(text) > 3:
-            text = re.sub(r'(.)\1{2,}', r'\1\1', text)            # 嗯嗯嗯嗯 → 嗯嗯
-            text = re.sub(r'(.{2,20})\1{2,}', r'\1', text)        # 在於英文文化的大臺… → 一次
-            # 若整段仍由單一短語高密度重複組成，整段丟棄
+            text = re.sub(r'(.)\1{2,}', r'\1\1', text)             # 嗯嗯嗯嗯 → 嗯嗯
+            text = re.sub(r'(.{2,20}?)\1{2,}', r'\1', text)        # 非貪婪：優先捕捉短重複
+            text = re.sub(r'(.{2,20})\1{2,}', r'\1', text)         # 貪婪再跑一次
             for length in range(3, min(len(text) // 3 + 1, 21)):
                 phrase = text[:length]
                 count = text.count(phrase)
@@ -422,4 +373,6 @@ class STTEngine:
                     remainder = text.replace(phrase, '').replace('，', '').replace(',', '')
                     if len(remainder) < length:
                         return ''
+            if len(text) > 80:
+                return ''
         return text.strip()

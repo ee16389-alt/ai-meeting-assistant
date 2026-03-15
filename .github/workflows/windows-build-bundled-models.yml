@@ -6,8 +6,8 @@ on:
       gguf_url:
         description: "Direct download URL for GGUF model (.gguf)"
         required: true
-      sherpa_zip_url:
-        description: "Direct download URL for sherpa-onnx model zip"
+      sherpa_url:
+        description: "Direct download URL for sherpa-onnx model (.tar.bz2 or .zip)"
         required: true
 
 jobs:
@@ -98,18 +98,20 @@ jobs:
           $ggufFilename = $cfg.ggufFilename
 
           Download-Asset -Url "${{ inputs.gguf_url }}" -OutFile "models\llm\$ggufFilename" -Label "GGUF"
-          Download-Asset -Url "${{ inputs.sherpa_zip_url }}" -OutFile "models\sherpa-onnx.zip" -Label "Sherpa zip"
-          Expand-Archive -Path models\sherpa-onnx.zip -DestinationPath models\sherpa-onnx -Force
+
+          Download-Asset -Url "${{ inputs.sherpa_url }}" -OutFile "models\sherpa-onnx.tar.bz2" -Label "Sherpa archive"
+          tar -xf models\sherpa-onnx.tar.bz2 -C models\sherpa-onnx
+          if ($LASTEXITCODE -ne 0) { throw "tar extraction failed" }
+          Remove-Item models\sherpa-onnx.tar.bz2 -Force
 
           $expectedName = $cfg.sherpaModelDirName
           $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
           if (-not (Test-Path $expectedDir)) {
-            $matches = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
+            $found = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
               Where-Object { $_.Name -eq $expectedName -and $_.FullName -notmatch '[\\/]+__MACOSX([\\/]|$)' }
-            if ($matches.Count -eq 1) {
-              $src = $matches[0].FullName
-              Move-Item -Path $src -Destination $expectedDir -Force
-              Write-Host "Normalized Sherpa dir: $src -> $expectedDir"
+            if ($found.Count -eq 1) {
+              Move-Item -Path $found[0].FullName -Destination $expectedDir -Force
+              Write-Host "Normalized Sherpa dir: $($found[0].FullName) -> $expectedDir"
             } else {
               throw "Could not uniquely locate expected Sherpa model dir: $expectedName"
             }

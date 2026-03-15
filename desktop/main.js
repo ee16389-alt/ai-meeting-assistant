@@ -54,12 +54,12 @@ function modelsBaseDir() {
 function hasBundledModels() {
   if (!app.isPackaged) return false;
   const ggufDir = path.join(process.resourcesPath, "models", "llm");
-  const whisperDir = path.join(process.resourcesPath, "models", "whisper");
+  const sherpaDir = path.join(process.resourcesPath, "models", "sherpa-onnx");
   try {
     const hasGguf =
       fs.existsSync(ggufDir) &&
       fs.readdirSync(ggufDir).some((n) => n.toLowerCase().endsWith(".gguf"));
-    return hasGguf && fs.existsSync(whisperDir);
+    return hasGguf && fs.existsSync(sherpaDir);
   } catch (_) {
     return false;
   }
@@ -82,16 +82,22 @@ function cleanStaleModels() {
   }
 }
 
+function _sherpaEncoderPath(sherpaDir) {
+  const int8 = path.join(sherpaDir, "encoder.int8.onnx");
+  const fp32 = path.join(sherpaDir, "encoder.onnx");
+  return fs.existsSync(int8) ? int8 : fs.existsSync(fp32) ? fp32 : null;
+}
+
 function hasDownloadedModels() {
   const cfg = loadModelPackConfig();
   const base = modelsBaseDir();
   const ggufPath = path.join(base, "llm", cfg.ggufFilename || "");
-  const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
-  const whisperDir = path.join(base, "whisper", whisperDirName);
+  const sherpaDirName = cfg.sherpaModelDirName || "sherpa-onnx-streaming-paraformer-bilingual-zh-en";
+  const sherpaDir = path.join(base, "sherpa-onnx", sherpaDirName);
   return (
     cfg.ggufFilename &&
     fs.existsSync(ggufPath) &&
-    fs.existsSync(path.join(whisperDir, "model.bin"))
+    !!_sherpaEncoderPath(sherpaDir)
   );
 }
 
@@ -114,15 +120,8 @@ function ensureBackendModelCompatPath() {
   }
 }
 
-// ── Whisper 模型檔案清單（Systran/faster-whisper-base）──
-const WHISPER_HF_REPO = "Systran/faster-whisper-base";
-const WHISPER_MODEL_FILES = [
-  { name: "config.json",   sizeMb: 0.001 },
-  { name: "tokenizer.json",sizeMb: 2     },
-  { name: "vocabulary.txt",sizeMb: 1     },
-  { name: "model.bin",     sizeMb: 74    },  // 最大，排最後
-];
-const WHISPER_TOTAL_MB = WHISPER_MODEL_FILES.reduce((s, f) => s + f.sizeMb, 0);
+// ── Sherpa-ONNX 模型大小估計（用於進度顯示）──
+const SHERPA_TOTAL_MB = 220;
 
 // ── 下載邏輯 ───────────────────────────────────────────
 
@@ -171,33 +170,23 @@ function downloadFile(url, destPath, onProgress) {
   });
 }
 
-async function downloadWhisperModel(destDir, sendProgress, progressBase, progressRange) {
+async function downloadSherpaModel(zipUrl, destDir, sendProgress, progressBase, progressRange) {
   fs.mkdirSync(destDir, { recursive: true });
-  let completedMb = 0;
-
-  for (let i = 0; i < WHISPER_MODEL_FILES.length; i++) {
-    const { name, sizeMb } = WHISPER_MODEL_FILES[i];
-    const destPath = path.join(destDir, name);
-
-    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 100) {
-      completedMb += sizeMb;
-      continue;
-    }
-
-    const url = `https://huggingface.co/${WHISPER_HF_REPO}/resolve/main/${name}`;
-    await downloadFile(url, destPath, ({ downloaded, total }) => {
-      const fileMb = downloaded / 1024 / 1024;
-      const totalProgress = completedMb + fileMb;
-      const pct = progressBase + Math.floor((totalProgress / WHISPER_TOTAL_MB) * progressRange);
-      const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
-      sendProgress({
-        stage: "whisper",
-        percent: Math.min(progressBase + progressRange - 1, pct),
-        text: `下載語音辨識模型 (${i + 1}/${WHISPER_MODEL_FILES.length}) ${name}: ${fileMb.toFixed(0)} MB ${totalMb}`,
-      });
+  const zipPath = path.join(destDir, "sherpa-onnx-model.zip");
+  sendProgress({ stage: "sherpa", percent: progressBase, text: `下載語音辨識模型（約 ${SHERPA_TOTAL_MB} MB）...` });
+  await downloadFile(zipUrl, zipPath, ({ downloaded, total }) => {
+    const mb = (downloaded / 1024 / 1024).toFixed(0);
+    const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
+    const pct = progressBase + (total > 0 ? Math.floor((downloaded / total) * progressRange) : 0);
+    sendProgress({
+      stage: "sherpa",
+      percent: Math.min(progressBase + progressRange - 1, pct),
+      text: `下載語音辨識模型... ${mb} MB ${totalMb}`,
     });
-    completedMb += sizeMb;
-  }
+  });
+  sendProgress({ stage: "sherpa", percent: progressBase + progressRange - 2, text: "解壓縮語音辨識模型..." });
+  await extractZip(zipPath, destDir);
+  try { fs.unlinkSync(zipPath); } catch (_) {}
 }
 
 function extractZip(zipPath, destDir) {
@@ -244,20 +233,22 @@ async function ensureModels(sendProgress) {
     sendProgress({ stage: "gguf", percent: 60, text: "語言模型已存在，跳過下載" });
   }
 
-  // ── 下載 Whisper 模型（直接從 HuggingFace 逐檔下載）──
-  const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
-  const whisperBase = path.join(base, "whisper");
-  const whisperFinal = path.join(whisperBase, whisperDirName);
+  // ── 下載 Sherpa-ONNX 模型 ──────────────────────────
+  const sherpaDirName = cfg.sherpaModelDirName || "sherpa-onnx-streaming-paraformer-bilingual-zh-en";
+  const sherpaBase = path.join(base, "sherpa-onnx");
+  const sherpaFinal = path.join(sherpaBase, sherpaDirName);
 
-  if (fs.existsSync(path.join(whisperFinal, "model.bin"))) {
-    sendProgress({ stage: "whisper", percent: 97, text: "語音辨識模型已存在，跳過下載" });
+  if (_sherpaEncoderPath(sherpaFinal)) {
+    sendProgress({ stage: "sherpa", percent: 97, text: "語音辨識模型已存在，跳過下載" });
+  } else if (cfg.sherpaZipDownloadUrl) {
+    sendProgress({ stage: "sherpa", percent: 60, text: "準備下載語音辨識模型（約 220 MB）..." });
+    await downloadSherpaModel(cfg.sherpaZipDownloadUrl, sherpaBase, sendProgress, 60, 37);
   } else {
-    sendProgress({ stage: "whisper", percent: 50, text: "準備下載語音辨識模型（約 770 MB）..." });
-    await downloadWhisperModel(whisperFinal, sendProgress, 50, 47);
+    sendProgress({ stage: "sherpa", percent: 97, text: "語音辨識模型將於首次啟動時載入..." });
   }
 
   sendProgress({ stage: "done", percent: 100, text: "模型準備完成，正在啟動..." });
-  return { ggufPath, whisperModelDir: whisperFinal };
+  return { ggufPath, sherpaModelDir: _sherpaEncoderPath(sherpaFinal) ? sherpaFinal : null };
 }
 
 // ── 後端啟動 ───────────────────────────────────────────
@@ -353,7 +344,7 @@ p  { font-size:0.8rem; color:#6b7280; margin-bottom:20px; }
 </style></head>
 <body>
   <h3>AI 會議助理 — 首次啟動</h3>
-  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~244 MB），下載完成後即可離線使用。</p>
+  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~220 MB），下載完成後即可離線使用。</p>
   <div class="track"><div id="bar" class="bar"></div></div>
   <div id="status" class="status">準備中...</div>
   <script>
@@ -392,11 +383,11 @@ async function createWindow() {
       };
 
       try {
-        const { ggufPath, whisperModelDir } = await ensureModels(send);
+        const { ggufPath, sherpaModelDir } = await ensureModels(send);
         modelEnv = {
           AMA_GGUF_PATH: ggufPath,
           HF_HOME: path.join(app.getPath("userData"), "hf_cache"),
-          ...(whisperModelDir ? { AMA_WHISPER_DIR: whisperModelDir } : {}),
+          ...(sherpaModelDir ? { AMA_SHERPA_DIR: sherpaModelDir } : {}),
         };
       } catch (err) {
         if (!progressWin.isDestroyed()) progressWin.close();
@@ -414,12 +405,12 @@ async function createWindow() {
       // 已下載過，直接讀路徑
       const cfg = loadModelPackConfig();
       const base = modelsBaseDir();
-      const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
-      const whisperDir = path.join(base, "whisper", whisperDirName);
+      const sherpaDirName = cfg.sherpaModelDirName || "sherpa-onnx-streaming-paraformer-bilingual-zh-en";
+      const sherpaDir = path.join(base, "sherpa-onnx", sherpaDirName);
       modelEnv = {
         AMA_GGUF_PATH: path.join(base, "llm", cfg.ggufFilename),
         HF_HOME: path.join(app.getPath("userData"), "hf_cache"),
-        ...(fs.existsSync(path.join(whisperDir, "model.bin")) ? { AMA_WHISPER_DIR: whisperDir } : {}),
+        ...(_sherpaEncoderPath(sherpaDir) ? { AMA_SHERPA_DIR: sherpaDir } : {}),
       };
     }
   }

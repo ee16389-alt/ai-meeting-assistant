@@ -1,6 +1,6 @@
 flask
 flask-socketio
-faster-whisper
+sherpa-onnx
 requests
 numpy
 pydub
