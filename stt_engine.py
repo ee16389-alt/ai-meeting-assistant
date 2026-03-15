@@ -146,7 +146,7 @@ def _find_whisper_model_dir() -> Path | None:
 
 
 class STTEngine:
-    TRANSCRIBE_INTERVAL_MS = 4000   # 每 4 秒批次辨識（small 模型夠快，兼顧即時感與效能）
+    TRANSCRIBE_INTERVAL_MS = 3000   # 每 3 秒批次辨識（small 模型夠快，兼顧即時感與效能）
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
 
