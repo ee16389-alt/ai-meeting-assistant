@@ -25,10 +25,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install NSIS and gdown
+      - name: Install Inno Setup and gdown
         shell: pwsh
         run: |
-          choco install nsis -y
+          choco install innosetup -y
           python -m pip install gdown
 
       - name: Download model assets (GGUF + Sherpa)
@@ -78,13 +78,13 @@ jobs:
             }
           }
 
-      - name: Build model pack installer (NSIS)
+      - name: Build model pack installer (Inno Setup)
         shell: pwsh
         run: |
           $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
           $label = $cfg.versionLabel
-          makensis /DVERSION_LABEL=$label scripts\model_pack.nsi
-          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DVERSION_LABEL=$label scripts\model_pack.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup build failed" }
           $exe = Get-ChildItem -Filter "AI-Meeting-Assistant-Model-Pack-*.exe" | Select-Object -First 1
           Write-Host "Built: $($exe.Name) ($([math]::Round($exe.Length/1MB, 0)) MB)"
 
