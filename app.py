@@ -122,6 +122,17 @@ def _export_root_dir() -> str:
     return os.path.join(home, "ai-meeting-assistant")
 
 
+def _unique_meeting_name(name: str) -> str:
+    """若資料夾已存在，自動加 _2、_3… 避免覆蓋舊會議。"""
+    base = os.path.join(_export_root_dir(), "download", name)
+    if not os.path.exists(base):
+        return name
+    counter = 2
+    while os.path.exists(os.path.join(_export_root_dir(), "download", f"{name}_{counter}")):
+        counter += 1
+    return f"{name}_{counter}"
+
+
 def _meeting_output_dir(meeting_name: str = "") -> str:
     # 優先使用錄音時設定的名稱，確保匯出與錄音音檔在同一資料夾
     safe_name = current_meeting_name or (meeting_name or "").strip() or time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -194,7 +205,7 @@ def handle_start(data=None):
         save_audio = bool(data.get("save_audio"))
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    current_meeting_name = meeting_name
+    current_meeting_name = _unique_meeting_name(meeting_name)
 
     if save_audio:
         export_dir = _meeting_output_dir(meeting_name)
