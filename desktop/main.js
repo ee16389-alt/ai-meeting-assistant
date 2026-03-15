@@ -170,11 +170,12 @@ function downloadFile(url, destPath, onProgress) {
   });
 }
 
-async function downloadSherpaModel(zipUrl, destDir, sendProgress, progressBase, progressRange) {
+async function downloadSherpaModel(archiveUrl, destDir, sendProgress, progressBase, progressRange) {
   fs.mkdirSync(destDir, { recursive: true });
-  const zipPath = path.join(destDir, "sherpa-onnx-model.zip");
+  const isTarBz2 = archiveUrl.includes(".tar.bz2") || archiveUrl.includes(".tgz") || archiveUrl.includes(".tar.gz");
+  const archivePath = path.join(destDir, isTarBz2 ? "sherpa-onnx-model.tar.bz2" : "sherpa-onnx-model.zip");
   sendProgress({ stage: "sherpa", percent: progressBase, text: `下載語音辨識模型（約 ${SHERPA_TOTAL_MB} MB）...` });
-  await downloadFile(zipUrl, zipPath, ({ downloaded, total }) => {
+  await downloadFile(archiveUrl, archivePath, ({ downloaded, total }) => {
     const mb = (downloaded / 1024 / 1024).toFixed(0);
     const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
     const pct = progressBase + (total > 0 ? Math.floor((downloaded / total) * progressRange) : 0);
@@ -185,14 +186,30 @@ async function downloadSherpaModel(zipUrl, destDir, sendProgress, progressBase, 
     });
   });
   sendProgress({ stage: "sherpa", percent: progressBase + progressRange - 2, text: "解壓縮語音辨識模型..." });
-  await extractZip(zipPath, destDir);
-  try { fs.unlinkSync(zipPath); } catch (_) {}
+  if (isTarBz2) {
+    await extractTar(archivePath, destDir);
+  } else {
+    await extractZip(archivePath, destDir);
+  }
+  try { fs.unlinkSync(archivePath); } catch (_) {}
+}
+
+function extractTar(archivePath, destDir) {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(destDir, { recursive: true });
+    // tar 內建於 Windows 10+
+    const proc = spawn("tar", ["-xf", archivePath, "-C", destDir], { windowsHide: true });
+    proc.on("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar extraction failed with code ${code}`));
+    });
+    proc.on("error", reject);
+  });
 }
 
 function extractZip(zipPath, destDir) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(destDir, { recursive: true });
-    // PowerShell Expand-Archive (built into Windows 5.0+)
     const ps = spawn("powershell", [
       "-NoProfile", "-NonInteractive", "-Command",
       `Expand-Archive -Path '${zipPath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
