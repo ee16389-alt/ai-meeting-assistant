@@ -338,6 +338,30 @@
             </section>
         </main>
 
+        <!-- DIAG STRIP -->
+        <div class="diag-strip mt-4">
+            <div class="diag-card">
+                <div class="diag-label">MIC</div>
+                <div id="diag-mic" class="diag-value">—</div>
+                <div id="diag-mic-sub" class="diag-sub">等待中</div>
+            </div>
+            <div class="diag-card">
+                <div class="diag-label">AUDIO CHUNK</div>
+                <div id="diag-chunk" class="diag-value">0</div>
+                <div id="diag-chunk-sub" class="diag-sub">尚未送出</div>
+            </div>
+            <div class="diag-card">
+                <div class="diag-label">BACKEND ACK</div>
+                <div id="diag-ack" class="diag-value">0</div>
+                <div id="diag-ack-sub" class="diag-sub">等待後端回應</div>
+            </div>
+            <div class="diag-card">
+                <div class="diag-label">TRANSCRIPT</div>
+                <div id="diag-transcript" class="diag-value">0 行</div>
+                <div id="diag-transcript-sub" class="diag-sub">尚未收到逐字稿</div>
+            </div>
+        </div>
+
         <!-- FOOTER -->
         <footer class="mt-8 glass p-4 rounded-2xl card-pop float-in space-y-3">
             <div class="w-full flex flex-wrap items-center justify-between gap-3">
