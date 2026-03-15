@@ -85,7 +85,7 @@ stt: STTEngine | _UnavailableSTT = _UnavailableSTT(Exception("STT 初始化中..
 def _init_stt_background():
     global stt, _stt_init_error
     try:
-        instance = STTEngine(model_size="small")
+        instance = STTEngine(model_size="base")
         stt = instance
         print("[STT] 模型初始化完成，後端就緒", flush=True)
     except Exception as e:
