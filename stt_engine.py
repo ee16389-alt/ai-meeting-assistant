@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import sys
 import threading
@@ -170,6 +171,13 @@ class STTEngine:
 
         self._recognizer = self._create_recognizer()
         self._stream = self._recognizer.create_stream()
+
+        # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=300)
+        self._worker_thread = threading.Thread(
+            target=self._worker_loop, daemon=True, name="stt-worker"
+        )
+        self._worker_thread.start()
         print("[STT] Sherpa-ONNX Paraformer 模型載入完成", flush=True)
 
     def _create_recognizer(self) -> "sherpa_onnx.OnlineRecognizer":
@@ -280,49 +288,64 @@ class STTEngine:
     # ── 音頻處理 ──────────────────────────────────────────
 
     def feed_audio(self, chunk: bytes) -> list[dict]:
+        """非阻塞：把 chunk 丟進隊列馬上回傳，由 worker 執行緒處理"""
         with self._lock:
             if self._state != State.RECORDING:
                 return []
-            stream = self._stream  # 持鎖取得 stream 參考
-
         try:
-            pcm16 = np.frombuffer(chunk, dtype=np.int16)
-            if pcm16.size == 0:
-                return []
-            samples = pcm16.astype(np.float32) / 32768.0
-        except Exception as e:
-            print(f"[STT] PCM 解析錯誤: {e}", flush=True)
-            return []
-
-        rms = float(np.sqrt(np.mean(np.square(samples))))
-        with self._lock:
-            self._last_audio_rms = rms
-
-        # 送入串流辨識器並解碼
-        stream.accept_waveform(self.SAMPLE_RATE, samples)
-        while self._recognizer.is_ready(stream):
-            self._recognizer.decode(stream)
-
-        result = self._recognizer.get_result(stream)
-        text = (result.text if hasattr(result, "text") else str(result)).strip()
-
-        is_ep = self._recognizer.is_endpoint(stream)
-        if text:
-            print(f"[STT] partial={repr(text[:40])} endpoint={is_ep}", flush=True)
-
-        if is_ep:
-            # 句子結束：觸發回呼並重置
-            print(f"[STT] endpoint detected, text={repr(text)}", flush=True)
-            if text:
-                self._emit_text(text)
-            self._recognizer.reset(stream)
-            with self._lock:
-                self._last_partial_text = ""
-        else:
-            with self._lock:
-                self._last_partial_text = _to_traditional(text) if text else ""
-
+            self._audio_queue.put_nowait(chunk)
+        except queue.Full:
+            print("[STT] audio queue full, dropping chunk", flush=True)
         return []
+
+    def _worker_loop(self) -> None:
+        """背景執行緒：持續從 queue 取 chunk 並執行 sherpa-onnx 推論"""
+        while True:
+            try:
+                chunk = self._audio_queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            with self._lock:
+                if self._state != State.RECORDING:
+                    continue
+                stream = self._stream
+
+            try:
+                pcm16 = np.frombuffer(chunk, dtype=np.int16)
+                if pcm16.size == 0:
+                    continue
+                samples = pcm16.astype(np.float32) / 32768.0
+            except Exception as e:
+                print(f"[STT] PCM 解析錯誤: {e}", flush=True)
+                continue
+
+            rms = float(np.sqrt(np.mean(np.square(samples))))
+            with self._lock:
+                self._last_audio_rms = rms
+
+            # 送入串流辨識器並解碼
+            stream.accept_waveform(self.SAMPLE_RATE, samples)
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode(stream)
+
+            result = self._recognizer.get_result(stream)
+            text = (result.text if hasattr(result, "text") else str(result)).strip()
+
+            is_ep = self._recognizer.is_endpoint(stream)
+            if text:
+                print(f"[STT] partial={repr(text[:40])} endpoint={is_ep}", flush=True)
+
+            if is_ep:
+                print(f"[STT] endpoint detected, text={repr(text)}", flush=True)
+                if text:
+                    self._emit_text(text)
+                self._recognizer.reset(stream)
+                with self._lock:
+                    self._last_partial_text = ""
+            else:
+                with self._lock:
+                    self._last_partial_text = _to_traditional(text) if text else ""
 
     def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
         """相容舊介面（stop 時呼叫），sherpa-onnx 串流版不需要"""
