@@ -86,7 +86,9 @@ stt: STTEngine | _UnavailableSTT = _UnavailableSTT(Exception("STT 初始化中..
 def _on_stt_segments(segments: list[dict]):
     """STT 背景 worker 完成推論後的回呼，透過 socketio 推送結果"""
     sid = _active_sid
+    print(f"[CB] _on_stt_segments called: {len(segments)} seg(s), sid={repr(sid)}", flush=True)
     if not sid:
+        print("[CB] no active sid, dropping", flush=True)
         return
     for seg in segments:
         with _transcript_lock:
@@ -97,6 +99,7 @@ def _on_stt_segments(segments: list[dict]):
                 "language": seg.get("language", ""),
             }
             transcript_lines.append(line)
+        print(f"[CB] emit transcript_update: {repr(line['text'][:40])}", flush=True)
         socketio.emit("transcript_update", line, room=sid)
 
 

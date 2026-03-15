@@ -306,8 +306,13 @@ class STTEngine:
         result = self._recognizer.get_result(stream)
         text = (result.text if hasattr(result, "text") else str(result)).strip()
 
-        if self._recognizer.is_endpoint(stream):
+        is_ep = self._recognizer.is_endpoint(stream)
+        if text:
+            print(f"[STT] partial={repr(text[:40])} endpoint={is_ep}", flush=True)
+
+        if is_ep:
             # 句子結束：觸發回呼並重置
+            print(f"[STT] endpoint detected, text={repr(text)}", flush=True)
             if text:
                 self._emit_text(text)
             self._recognizer.reset(stream)
@@ -336,12 +341,19 @@ class STTEngine:
 
     def _emit_text(self, text: str) -> None:
         text = _to_traditional(text)
-        text = self._filter_repetitions(text)
-        if not text:
+        filtered = self._filter_repetitions(text)
+        if not filtered:
+            print(f"[STT] _emit_text: dropped by repetition filter, original={repr(text[:60])}", flush=True)
             return
-        if _HALLUCINATION_PATTERNS.search(text) or _PUNCTUATION_ONLY.match(text):
+        text = filtered
+        if _HALLUCINATION_PATTERNS.search(text):
+            print(f"[STT] _emit_text: dropped by hallucination filter: {repr(text[:60])}", flush=True)
+            return
+        if _PUNCTUATION_ONLY.match(text):
+            print(f"[STT] _emit_text: dropped punctuation-only: {repr(text)}", flush=True)
             return
         if text == self._last_confirmed_text:
+            print(f"[STT] _emit_text: dropped duplicate: {repr(text[:60])}", flush=True)
             return
         self._last_confirmed_text = text
 
@@ -373,6 +385,6 @@ class STTEngine:
                     remainder = text.replace(phrase, '').replace('，', '').replace(',', '')
                     if len(remainder) < length:
                         return ''
-            if len(text) > 80:
+            if len(text) > 300:
                 return ''
         return text.strip()
