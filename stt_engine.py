@@ -151,9 +151,7 @@ def _find_whisper_model_dir() -> Path | None:
 class STTEngine:
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
-    SILENCE_TRIGGER_MS = 300    # 靜音超過此時間立刻觸發辨識
-    MIN_AUDIO_MS = 500           # 最短累積時間，避免片段太短
-    MAX_AUDIO_MS = 3500          # 持續說話時強制觸發，避免等太久
+    TRANSCRIBE_INTERVAL_MS = 3000  # 固定每隔此時間觸發一次辨識
 
     def __init__(self, model_size: str = "medium"):
         if WhisperModel is None:
@@ -265,8 +263,6 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._last_partial_text = ""
-            self._last_audio_rms = 0.0
-            self._silence_ms = 0
             self._last_confirmed_text = ""
             self._state = State.IDLE
 
@@ -278,23 +274,12 @@ class STTEngine:
                 return []
             self._append_pcm_chunk(chunk)
             duration_ms = self._get_buffer_duration_ms()
-            if duration_ms < self.MIN_AUDIO_MS:
-                return []
-
-            # 更新靜音累計時間
-            chunk_ms = int(len(chunk) / 2 / self.SAMPLE_RATE * 1000)
-            if self._last_audio_rms < self.SILENCE_THRESHOLD:
-                self._silence_ms += chunk_ms
-            else:
-                self._silence_ms = 0
-
-            # 停頓超過閾值或累積太長 → 觸發辨識
-            if self._silence_ms < self.SILENCE_TRIGGER_MS and duration_ms < self.MAX_AUDIO_MS:
+            # 固定間隔觸發，不依賴靜音偵測（適合多人同時說話的場景）
+            if duration_ms < self.TRANSCRIBE_INTERVAL_MS:
                 return []
 
             audio = self._pcm_buffer.copy()
             self._pcm_buffer = np.array([], dtype=np.float32)
-            self._silence_ms = 0
             self._last_partial_text = ""
 
         # 若 buffer 全為靜音（無有效語音），直接跳過避免幻覺
