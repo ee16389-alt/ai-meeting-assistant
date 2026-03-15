@@ -30,6 +30,8 @@ def main():
         "--add-data", f"static{data_sep}static",
         "--collect-all", "llama_cpp",
         "--collect-all", "opencc",
+        "--collect-all", "faster_whisper",
+        "--collect-all", "ctranslate2",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "simple_websocket",
         "--hidden-import", "llama_cpp",
