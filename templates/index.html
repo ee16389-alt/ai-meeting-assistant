@@ -1411,7 +1411,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (!linesRoot) {
                 linesRoot = document.createElement('div');
                 linesRoot.id = 'transcript-lines';
-                linesRoot.className = 'space-y-1';
+                linesRoot.className = 'leading-relaxed';
                 div.appendChild(linesRoot);
             }
             return linesRoot;
@@ -1464,8 +1464,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                     continue;
                 }
                 if (!lineNode) {
-                    lineNode = document.createElement('p');
-                    lineNode.className = 'text-slate-900 leading-relaxed text-sm';
+                    lineNode = document.createElement('span');
+                    lineNode.className = 'text-slate-900 text-sm';
                     lineNode.dataset.index = String(index);
                     const next = findNextLineNode(index);
                     if (next) {
@@ -1475,8 +1475,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                     }
                     transcriptLineNodes[index] = lineNode;
                 }
-                if (lineNode.textContent !== mergedLine) {
-                    lineNode.textContent = mergedLine;
+                if (lineNode.textContent !== mergedLine + ' ') {
+                    lineNode.textContent = mergedLine + ' ';
                 }
             }
 
