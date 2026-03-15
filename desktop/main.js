@@ -115,12 +115,12 @@ function ensureBackendModelCompatPath() {
 }
 
 // ── Whisper 模型檔案清單（Systran/faster-whisper-medium）──
-const WHISPER_HF_REPO = "Systran/faster-whisper-medium";
+const WHISPER_HF_REPO = "Systran/faster-whisper-small";
 const WHISPER_MODEL_FILES = [
   { name: "config.json",   sizeMb: 0.001 },
   { name: "tokenizer.json",sizeMb: 2     },
   { name: "vocabulary.txt",sizeMb: 1     },
-  { name: "model.bin",     sizeMb: 769   },  // 最大，排最後
+  { name: "model.bin",     sizeMb: 244   },  // 最大，排最後
 ];
 const WHISPER_TOTAL_MB = WHISPER_MODEL_FILES.reduce((s, f) => s + f.sizeMb, 0);
 
@@ -353,7 +353,7 @@ p  { font-size:0.8rem; color:#6b7280; margin-bottom:20px; }
 </style></head>
 <body>
   <h3>AI 會議助理 — 首次啟動</h3>
-  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~770 MB），下載完成後即可離線使用。</p>
+  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~244 MB），下載完成後即可離線使用。</p>
   <div class="track"><div id="bar" class="bar"></div></div>
   <div id="status" class="status">準備中...</div>
   <script>
