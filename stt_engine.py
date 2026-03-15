@@ -153,7 +153,7 @@ def _find_whisper_model_dir() -> Path | None:
 class STTEngine:
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
-    TRANSCRIBE_INTERVAL_MS = 4000  # 固定每隔此時間觸發一次辨識
+    TRANSCRIBE_INTERVAL_MS = 2000  # 固定每隔此時間觸發一次辨識
 
     def __init__(self, model_size: str = "medium"):
         if WhisperModel is None:

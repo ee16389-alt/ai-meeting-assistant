@@ -2,7 +2,7 @@
   "versionLabel": "qwen2.5-3b-q4_k_m",
   "ggufFilename": "qwen2.5-3b-instruct-q4_k_m.gguf",
   "ggufDownloadUrl": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-  "whisperModelDirName": "faster-whisper-small",
+  "whisperModelDirName": "faster-whisper-base",
   "whisperZipDownloadUrl": "",
   "installerFilename": "AI-Meeting-Assistant-Model-Pack-qwen2.5-3b-q4_k_m-Setup.exe"
 }

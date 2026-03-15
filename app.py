@@ -102,7 +102,7 @@ def _on_stt_segments(segments: list[dict]):
 def _init_stt_background():
     global stt, _stt_init_error
     try:
-        instance = STTEngine(model_size="small")
+        instance = STTEngine(model_size="base")
         instance.set_result_callback(_on_stt_segments)
         stt = instance
         print("[STT] 模型初始化完成，後端就緒", flush=True)
