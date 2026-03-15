@@ -28,6 +28,7 @@ from cognition import (
     proofread_text,
     summarize_full,
     summarize_key_points,
+    summarize_all_in_one,
     check_health,
     summary_engine_status,
 )
@@ -484,7 +485,6 @@ def _generate_summary(mode: str, full_text: str):
     
     # 最終傳送完整結果以供快取
     socketio.emit("summary_result", {"mode": mode, "content": accumulated})
-    end_summary_request()
 
 
 def _export_meeting(meeting_name: str, transcript_override: str = "", summary_overrides: dict = None):
