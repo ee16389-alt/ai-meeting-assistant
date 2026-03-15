@@ -28,7 +28,6 @@ from cognition import (
     proofread_text,
     summarize_full,
     summarize_key_points,
-    extract_action_items,
     check_health,
     summary_engine_status,
 )
@@ -393,7 +392,6 @@ def handle_export(data):
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
         "key_points": data.get("summary_key", "").strip(),
-        "action_items": data.get("summary_action", "").strip()
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -407,8 +405,7 @@ def handle_export_summary(data):
     transcript_override = data.get("transcript_override", "").strip()
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
-        "key_points": data.get("summary_key", "").strip(),
-        "action_items": data.get("summary_action", "").strip(),
+        "key_points": data.get("summary_key", "").strip(),,
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -464,21 +461,12 @@ def _generate_summary(mode: str, full_text: str):
             "根據內容多寡自行決定重點數量：內容豐富可列出更多點，內容簡短則少列，不強制固定數量。\n"
             "每個重點應為完整的觀念或結論，最多不超過 100 點。"
         )
-    elif mode == "action_items":
-        system_prompt = (
-            "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
-            "只列出逐字稿中明確指派給人的具體行動，格式為「- [ ] 具體行動」。\n"
-            "每項必須是可執行的任務（例如：安排會議、確認數字、寄送文件），不可列出觀念說明或背景資訊。\n"
-            "不可捏造、補充、推測逐字稿未提到的內容。\n"
-            "若逐字稿沒有明確的待辦事項，直接輸出「無明確待辦事項」，不要強行列出。"
-        )
     elif mode == "all":
         system_prompt = (
             "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
             "請一次性提供以下內容：\n"
             "1. 【全文摘要】：精簡摘要。\n"
-            "2. 【重點條列】：3-5 個重點。\n"
-            "3. 【待辦清單】：具體行動項目。"
+            "2. 【重點條列】：3-5 個重點。"
         )
 
     # 告訴前端準備開始串流
@@ -528,26 +516,21 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
     if summary_overrides and summary_overrides.get("full"):
         summary_full = summary_overrides["full"]
         summary_key = summary_overrides.get("key_points", "")
-        summary_actions = summary_overrides.get("action_items", "")
     else:
         summary_full = ""
         summary_key = ""
-        summary_actions = ""
 
     summary_lines = []
     summary_lines.append(f"會議名稱: {meeting_name}")
     summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     summary_lines.append("=" * 50)
     summary_lines.append("")
-    if summary_full or summary_key or summary_actions:
+    if summary_full or summary_key:
         summary_lines.append("【全文摘要】")
         summary_lines.append(summary_full or "（未生成）")
         summary_lines.append("")
         summary_lines.append("【重點條列】")
         summary_lines.append(summary_key or "（未生成）")
-        summary_lines.append("")
-        summary_lines.append("【待辦清單】")
-        summary_lines.append(summary_actions or "（未生成）")
     else:
         summary_lines.append("（摘要尚未生成，請在主畫面點選摘要按鈕後再次匯出）")
     summary_content = "\n".join(summary_lines)
@@ -591,7 +574,7 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
 
     cached = summary_overrides or {}
     # 判斷是否有足夠的快取內容直接使用
-    has_cache = any(cached.get(k) for k in ("full", "key_points", "action_items"))
+    has_cache = any(cached.get(k) for k in ("full", "key_points"))
 
     summary_content = ""
     if has_cache or full_text.strip():
@@ -599,7 +582,7 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
             # 快取不足時才執行 LLM 推論
             try:
                 combo = summarize_all_in_one(full_text)
-                cached = {"full": combo["full"], "key_points": combo["key_points"], "action_items": combo["action_items"]}
+                cached = {"full": combo["full"], "key_points": combo["key_points"]}
             except Exception as e:
                 socketio.emit("error", {"message": f"摘要生成失敗，無法匯出：{e}"})
                 return
@@ -618,9 +601,6 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
             summary_lines.append("【重點條列】")
             summary_lines.append(cached["key_points"])
             summary_lines.append("")
-        if mode in ("action_items", "all") and cached.get("action_items"):
-            summary_lines.append("【待辦清單】")
-            summary_lines.append(cached["action_items"])
 
         summary_content = "\n".join(summary_lines)
     else:

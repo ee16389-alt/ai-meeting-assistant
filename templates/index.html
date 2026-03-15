@@ -349,7 +349,6 @@
                     <div class="flex gap-2 flex-wrap summary-toolbar">
                         <button onclick="requestSummary('full')" class="summary-tab tab-active text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="full" data-i18n="summary_full">全文摘要</button>
                         <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points" data-i18n="summary_key">重點條列</button>
-                        <button onclick="requestSummary('action_items')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="action_items" data-i18n="summary_action">待辦清單</button>
                         <button onclick="requestAllSummaries()" class="text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500" data-i18n="summary_all">全部摘要</button>
                     </div>
                 </div>
@@ -395,11 +394,6 @@
                             class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
                             <i data-lucide="list" class="w-4 h-4 flex-shrink-0"></i>
                             <span data-i18n="export_key">匯出重點條列</span>
-                        </button>
-                        <button onclick="exportSummary('action_items')"
-                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
-                            <i data-lucide="check-square" class="w-4 h-4 flex-shrink-0"></i>
-                            <span data-i18n="export_action">匯出待辦清單</span>
                         </button>
                         <div class="border-t border-slate-100 my-0.5"></div>
                         <button onclick="exportSummary('all')"
@@ -468,7 +462,7 @@
                 </div>
                 <div>
                     <div class="font-semibold text-slate-900 mb-1">4. 產生 AI 摘要</div>
-                    <div>在右側可選擇「全文摘要 / 重點條列 / 待辦清單 / 全部摘要」。</div>
+                    <div>在右側可選擇「全文摘要 / 重點條列 / 全部摘要」。</div>
                 </div>
                 <div>
                     <div class="font-semibold text-slate-900 mb-1">5. 匯出檔案</div>
@@ -1038,13 +1032,16 @@
             const meetingInput = document.getElementById('meeting-name');
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
-                alert(t('alert_need_meeting_name'));
-                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); }, 150);
+                showToast(t('alert_need_meeting_name'));
+                meetingInput.disabled = false;
+                meetingInput.focus();
                 return;
             }
             if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
-                alert(t('alert_need_new_meeting_name'));
-                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); meetingInput.select(); }, 150);
+                showToast(t('alert_need_new_meeting_name'));
+                meetingInput.disabled = false;
+                meetingInput.focus();
+                meetingInput.select();
                 return;
             }
 
@@ -1079,9 +1076,10 @@
             const meetingInput = document.getElementById('meeting-name');
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
-                alert(t('alert_need_meeting_name'));
+                showToast(t('alert_need_meeting_name'));
+                meetingInput.disabled = false;
+                meetingInput.focus();
                 isBusy = false;
-                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); }, 150);
                 return;
             }
 
@@ -1156,7 +1154,7 @@
                 hasEnhancedTranscript = false;
                 setEnhanceUndoVisible(false);
                 isTranscriptEditing = false;
-                summaryCache = { full: null, key_points: null, action_items: null };
+                summaryCache = { full: null, key_points: null };
                 summaryCacheSourceText = '';
                 summaryViewMode = 'single';
                 clearSummaryLocksForNewRecording();
@@ -1824,14 +1822,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         function summaryTitle(mode) {
             if (mode === 'full') return t('summary_full');
             if (mode === 'key_points') return t('summary_key');
-            if (mode === 'action_items') return t('summary_action');
             return mode;
         }
 
         let summaryCache = {
             full: null,
             key_points: null,
-            action_items: null,
         };
         let summaryCacheSourceText = '';
         let summaryViewMode = 'single';
@@ -1840,7 +1836,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         function resetSummaryCacheForTranscript(transcriptText) {
             if (summaryCacheSourceText === transcriptText) return;
             summaryCacheSourceText = transcriptText;
-            summaryCache = { full: null, key_points: null, action_items: null };
+            summaryCache = { full: null, key_points: null };
             activeSingleSummaryMode = 'full';
         }
 
@@ -1858,7 +1854,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             renderAllSummarySkeleton();
             if (summaryCache.full) showSummary('full', summaryCache.full);
             if (summaryCache.key_points) showSummary('key_points', summaryCache.key_points);
-            if (summaryCache.action_items) showSummary('action_items', summaryCache.action_items);
         }
 
         function requestAllSummaries() {
@@ -1871,12 +1866,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryViewMode = 'all';
             resetSummaryCacheForTranscript(transcriptOverride);
             activeSingleSummaryMode = null;
-            if (summaryCache.full && summaryCache.key_points && summaryCache.action_items) {
+            if (summaryCache.full && summaryCache.key_points) {
                 renderAllSummariesFromCache();
                 return;
             }
             beginSummaryRequest(3);
-            summaryCache = { full: null, key_points: null, action_items: null };
+            summaryCache = { full: null, key_points: null };
             renderAllSummarySkeleton();
             socket.emit('request_summary', { mode: 'all', transcript_override: transcriptOverride });
         }
@@ -1906,7 +1901,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 <div id="summary-all" class="space-y-4">
                     ${renderSummarySkeletonBlock('full')}
                     ${renderSummarySkeletonBlock('key_points')}
-                    ${renderSummarySkeletonBlock('action_items')}
                 </div>
             `;
         }
@@ -1950,7 +1944,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         // ── 匯出操作 ────────────────────────────────────
         function hasCachedSummaryForMode(mode) {
             if (mode === 'all') {
-                return Boolean(summaryCache.full && summaryCache.key_points && summaryCache.action_items);
+                return Boolean(summaryCache.full && summaryCache.key_points);
             }
             return Boolean(summaryCache[mode]);
         }
@@ -1968,7 +1962,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 transcript_override: transcriptText,
                 summary_full: summaryCache.full,
                 summary_key: summaryCache.key_points,
-                summary_action: summaryCache.action_items,
             });
         }
 
