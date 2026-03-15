@@ -905,6 +905,28 @@
 
         socket.on('summary_result', (data) => {
             endSummaryRequest();
+            // 清掉串流暫存區
+            const streamDiv = document.getElementById(`summary-stream-${data.mode}`);
+            if (streamDiv) streamDiv.remove();
+
+            if (data.mode === 'all') {
+                // 解析拆分成 full 和 key_points
+                const raw = data.content || '';
+                let full = '', key = '';
+                if (raw.includes('【全文摘要】')) {
+                    full = raw.split('【全文摘要】')[1].split('【重點條列】')[0].trim();
+                }
+                if (raw.includes('【重點條列】')) {
+                    key = raw.split('【重點條列】')[1].trim();
+                }
+                if (!full && !key) { full = raw; }
+                summaryCache.full = full || raw;
+                summaryCache.key_points = key;
+                showSummary('full', summaryCache.full);
+                if (key) showSummary('key_points', key);
+                return;
+            }
+
             summaryCache[data.mode] = data.content;
             if (summaryViewMode === 'single' && activeSingleSummaryMode && data.mode !== activeSingleSummaryMode) {
                 return;
