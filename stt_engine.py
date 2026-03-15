@@ -47,10 +47,12 @@ SPEAKER_GAP_THRESHOLD = 1.5
 # Whisper 初始提示：引導輸出繁體中文台灣用字，適應中英混切
 TAIWAN_PROMPT = "以下是台灣繁體中文會議紀錄，包含商業術語與英文詞彙。"
 
-# Whisper 常見幻覺句（靜音時模型虛構的輸出）
+# Whisper 常見幻覺句（靜音時模型虛構的輸出，或 prompt 回音）
 _HALLUCINATION_PATTERNS = re.compile(
     r"(thank you for watching|字幕由|請訂閱|掌聲|♪|♫|music|ambient|"
-    r"by\s+\w+\s+caption|subtitles?\s+by)",
+    r"by\s+\w+\s+caption|subtitles?\s+by|"
+    r"台灣繁體中文會議紀錄|包含商業術語與英文詞彙|以下是台灣|"
+    r"翻譯中|翻唱中|字幕製作)",
     re.IGNORECASE,
 )
 
@@ -144,7 +146,7 @@ def _find_whisper_model_dir() -> Path | None:
 
 
 class STTEngine:
-    TRANSCRIBE_INTERVAL_MS = 5000   # 每 5 秒批次辨識
+    TRANSCRIBE_INTERVAL_MS = 8000   # 每 8 秒批次辨識（CPU 需要時間推論）
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
 
@@ -311,8 +313,8 @@ class STTEngine:
             segments_iter, info = self._model.transcribe(
                 audio,
                 language="zh",
-                beam_size=5,
-                best_of=5,
+                beam_size=1,        # greedy search，速度提升 3-5x
+                best_of=1,
                 temperature=0.0,
                 initial_prompt=TAIWAN_PROMPT,
                 vad_filter=True,
@@ -321,7 +323,7 @@ class STTEngine:
                     speech_pad_ms=200,
                     threshold=0.5,
                 ),
-                condition_on_previous_text=True,
+                condition_on_previous_text=False,  # 避免 prompt 回音
                 word_timestamps=False,
             )
 
