@@ -114,13 +114,13 @@ function ensureBackendModelCompatPath() {
   }
 }
 
-// ── Whisper 模型檔案清單（Systran/faster-whisper-medium）──
-const WHISPER_HF_REPO = "Systran/faster-whisper-small";
+// ── Whisper 模型檔案清單（Systran/faster-whisper-tiny）──
+const WHISPER_HF_REPO = "Systran/faster-whisper-tiny";
 const WHISPER_MODEL_FILES = [
   { name: "config.json",   sizeMb: 0.001 },
   { name: "tokenizer.json",sizeMb: 2     },
   { name: "vocabulary.txt",sizeMb: 1     },
-  { name: "model.bin",     sizeMb: 244   },  // 最大，排最後
+  { name: "model.bin",     sizeMb: 75    },  // 最大，排最後
 ];
 const WHISPER_TOTAL_MB = WHISPER_MODEL_FILES.reduce((s, f) => s + f.sizeMb, 0);
 

@@ -1039,12 +1039,12 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
-                setTimeout(() => meetingInput.focus(), 50);
+                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); }, 150);
                 return;
             }
             if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
                 alert(t('alert_need_new_meeting_name'));
-                setTimeout(() => { meetingInput.focus(); meetingInput.select(); }, 50);
+                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); meetingInput.select(); }, 150);
                 return;
             }
 
@@ -1080,8 +1080,8 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
-                setTimeout(() => meetingInput.focus(), 50);
                 isBusy = false;
+                setTimeout(() => { meetingInput.disabled = false; meetingInput.focus(); }, 150);
                 return;
             }
 
