@@ -1185,18 +1185,16 @@
             }
             isRecording = false;
             recordingSessionReady = false;
-            await emitWithAck('pause_recording', {});
+            // 立即更新 UI，不等 ACK（audio_chunk 排隊會導致 ACK timeout）
+            socket.emit('pause_recording', {});
         }
 
         async function resumeRecording() {
             if (audioContext && audioContext.state === 'suspended') {
                 await audioContext.resume();
             }
-            const ack = await emitWithAck('resume_recording', {});
-            if (!ack || !ack.ok) {
-                recordingSessionReady = false;
-                throw new Error((ack && ack.error) || '後端未接受繼續錄音請求');
-            }
+            // 立即更新 UI，不等 ACK
+            socket.emit('resume_recording', {});
             recordingSessionReady = true;
             isRecording = true;
         }
