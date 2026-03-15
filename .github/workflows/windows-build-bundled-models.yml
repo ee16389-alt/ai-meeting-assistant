@@ -43,9 +43,10 @@ jobs:
           $reqs = Get-Content requirements.txt | Where-Object { $_ -and ($_ -notmatch '^\s*llama') }
           if ($reqs) { python -m pip install @reqs }
           python -m pip install pyinstaller gdown
-          # Build llama-cpp-python without AVX/AVX2 for maximum CPU compatibility
+          # Build llama-cpp-python from source without AVX/AVX2 for maximum CPU compatibility
+          # --no-binary forces source build so CMAKE_ARGS are actually applied
           $env:CMAKE_ARGS = "-DLLAMA_AVX=OFF -DLLAMA_AVX2=OFF -DLLAMA_F16C=OFF -DLLAMA_FMA=OFF"
-          python -m pip install llama-cpp-python --force-reinstall --no-cache-dir
+          python -m pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
 
       - name: Install NSIS
         run: choco install nsis -y
