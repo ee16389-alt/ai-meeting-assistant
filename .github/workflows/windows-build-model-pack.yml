@@ -1,0 +1,96 @@
+name: Build Windows Model Pack Installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      gguf_url:
+        description: "Direct download URL for GGUF model (.gguf)"
+        required: true
+      sherpa_url:
+        description: "Direct download URL for sherpa-onnx model (.tar.bz2)"
+        required: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install NSIS and gdown
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          python -m pip install gdown
+
+      - name: Download model assets (GGUF + Sherpa)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          function Download-Asset {
+            param([string]$Url, [string]$OutFile, [string]$Label)
+            $Url = $Url.Trim()
+            Write-Host "Downloading ${Label} from: $Url"
+            $isDrive = $Url -match 'drive\.google\.com'
+            if ($isDrive) {
+              python -m gdown --fuzzy "$Url" -O "$OutFile"
+              if ($LASTEXITCODE -ne 0) { throw "gdown failed for ${Label}" }
+            } else {
+              curl.exe -L --retry 3 --retry-delay 5 -o "$OutFile" $Url
+              if ($LASTEXITCODE -ne 0) { throw "curl failed for ${Label} (exit $LASTEXITCODE)" }
+            }
+            $size = (Get-Item $OutFile).Length
+            if ($size -le 0) { throw "Download failed for ${Label}: file is empty" }
+            Write-Host "Downloaded ${Label} -> ${OutFile} ($size bytes)"
+          }
+
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+
+          New-Item -ItemType Directory -Force -Path models\llm | Out-Null
+          New-Item -ItemType Directory -Force -Path models\sherpa-onnx | Out-Null
+
+          Download-Asset -Url "${{ inputs.gguf_url }}" -OutFile "models\llm\$($cfg.ggufFilename)" -Label "GGUF"
+          Download-Asset -Url "${{ inputs.sherpa_url }}" -OutFile "models\sherpa-onnx.tar.bz2" -Label "Sherpa archive"
+
+          tar -xf models\sherpa-onnx.tar.bz2 -C models\sherpa-onnx
+          if ($LASTEXITCODE -ne 0) { throw "tar extraction failed" }
+          Remove-Item models\sherpa-onnx.tar.bz2 -Force
+
+          # 確保模型目錄名稱正確
+          $expectedName = $cfg.sherpaModelDirName
+          $expectedDir = Join-Path "models\sherpa-onnx" $expectedName
+          if (-not (Test-Path $expectedDir)) {
+            $found = Get-ChildItem -Path "models\sherpa-onnx" -Directory -Recurse |
+              Where-Object { $_.Name -eq $expectedName }
+            if ($found.Count -eq 1) {
+              Move-Item -Path $found[0].FullName -Destination $expectedDir -Force
+            } else {
+              throw "Could not locate Sherpa model dir: $expectedName"
+            }
+          }
+
+      - name: Build model pack installer (NSIS)
+        shell: pwsh
+        run: |
+          $cfg = Get-Content desktop\model_pack_config.json | ConvertFrom-Json
+          $label = $cfg.versionLabel
+          makensis /DVERSION_LABEL=$label scripts\model_pack.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis failed" }
+          $exe = Get-ChildItem -Filter "AI-Meeting-Assistant-Model-Pack-*.exe" | Select-Object -First 1
+          Write-Host "Built: $($exe.Name) ($([math]::Round($exe.Length/1MB, 0)) MB)"
+
+      - name: Upload model pack installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-model-pack-installer
+          path: "AI-Meeting-Assistant-Model-Pack-*.exe"
+          if-no-files-found: error
