@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import sys
 import threading
@@ -51,8 +52,9 @@ TAIWAN_PROMPT = "以下是台灣繁體中文會議紀錄，包含商業術語與
 _HALLUCINATION_PATTERNS = re.compile(
     r"(thank you for watching|字幕由|請訂閱|訂閱頻道|點讚|不吝|掌聲|♪|♫|music|ambient|"
     r"by\s+\w+\s+caption|subtitles?\s+by|"
-    r"台灣繁體中文會議紀錄|包含商業術語與英文詞彙|以下是台灣|"
-    r"翻譯中|翻唱中|字幕製作|暢時暢時|臺灣繁號|繁號五十七)",
+    r"台灣繁體中文會議|包含商業術語與英文詞彙|以下是台灣|"
+    r"翻譯中|翻唱中|字幕製作|暢時暢時|臺灣繁號|繁號五十七|"
+    r"這首歌是以往|這首歌是)",
     re.IGNORECASE,
 )
 
@@ -164,9 +166,13 @@ class STTEngine:
         self._current_speaker = 1
         self._last_segment_end = 0.0
         self._last_partial_text = ""
-        self._last_audio_rms = 0.0
-        self._silence_ms = 0
         self._last_confirmed_text = ""
+        self._result_callback = None
+
+        # 背景推論 worker：避免 Whisper 推論阻塞 SocketIO 事件迴圈
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._worker = threading.Thread(target=self._transcribe_worker, daemon=True)
+        self._worker.start()
 
         self._model = self._create_model(model_size)
         print("[STT] Faster-Whisper 模型載入完成", flush=True)
@@ -266,6 +272,23 @@ class STTEngine:
             self._last_confirmed_text = ""
             self._state = State.IDLE
 
+    def set_result_callback(self, cb):
+        """設定辨識結果回呼，由背景執行緒呼叫"""
+        self._result_callback = cb
+
+    def _transcribe_worker(self):
+        """背景執行緒：持續從佇列取音訊並執行 Whisper 推論"""
+        while True:
+            audio = self._audio_queue.get()
+            if audio is None:
+                break
+            results = self._do_transcribe(audio)
+            if results and self._result_callback:
+                try:
+                    self._result_callback(results)
+                except Exception as e:
+                    print(f"[STT] callback 錯誤: {e}", flush=True)
+
     # ── 音頻處理 ──────────────────────────────────────────
 
     def feed_audio(self, chunk: bytes) -> list[dict]:
@@ -286,8 +309,13 @@ class STTEngine:
         if np.max(np.abs(audio)) < self.SILENCE_THRESHOLD:
             return []
 
-        # 鎖外執行推論，不阻塞其他 feed_audio
-        return self._do_transcribe(audio)
+        # 放入佇列由背景 worker 處理，立刻回傳不阻塞
+        # 若佇列滿（上一段還沒處理完），丟棄本次避免堆積
+        try:
+            self._audio_queue.put_nowait(audio)
+        except queue.Full:
+            print("[STT] 佇列已滿，略過本次音訊", flush=True)
+        return []
 
     def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
         """對外部傳入的 buffer 進行轉寫（供非同步 stop 使用）。"""

@@ -21,7 +21,7 @@ def _configure_console_encoding() -> None:
 
 _configure_console_encoding()
 
-from flask import Flask, render_template, send_from_directory
+from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
 from cognition import (
@@ -82,10 +82,28 @@ _stt_init_done = threading.Event()
 stt: STTEngine | _UnavailableSTT = _UnavailableSTT(Exception("STT 初始化中..."))
 
 
+def _on_stt_segments(segments: list[dict]):
+    """STT 背景 worker 完成推論後的回呼，透過 socketio 推送結果"""
+    sid = _active_sid
+    if not sid:
+        return
+    for seg in segments:
+        with _transcript_lock:
+            line = {
+                "index": len(transcript_lines),
+                "text": seg["text"],
+                "timestamp": time.strftime("%H:%M:%S"),
+                "language": seg.get("language", ""),
+            }
+            transcript_lines.append(line)
+        socketio.emit("transcript_update", line, room=sid)
+
+
 def _init_stt_background():
     global stt, _stt_init_error
     try:
         instance = STTEngine(model_size="small")
+        instance.set_result_callback(_on_stt_segments)
         stt = instance
         print("[STT] 模型初始化完成，後端就緒", flush=True)
     except Exception as e:
@@ -103,6 +121,7 @@ transcript_lines: list[dict] = []
 _transcript_lock = threading.Lock()
 proofread_index = 0  # 追蹤下一個待校對的行號
 audio_chunk_count = 0
+_active_sid: str = ""  # 目前錄音的 client session id
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
@@ -185,7 +204,8 @@ def handle_connect():
 
 @socketio.on("start_recording")
 def handle_start(data=None):
-    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count
+    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid
+    _active_sid = request.sid
     with _transcript_lock:
         transcript_lines = []
         proofread_index = 0
@@ -250,33 +270,8 @@ def handle_audio_chunk(data):
     audio_chunk_count += 1
     print(f"[STT] 收到音訊 chunk: {size} bytes (count={audio_chunk_count})", flush=True)
 
-    segments = stt.feed_audio(chunk)
-    partial_text = getattr(stt, "partial_text", "").strip()
-    if partial_text:
-        emit("transcript_partial", {
-            "text": partial_text,
-            "timestamp": time.strftime("%H:%M:%S"),
-        })
-    else:
-        emit("transcript_partial_clear")
-
-    for seg in segments:
-        with _transcript_lock:
-            line = {
-                "index": len(transcript_lines),
-                "text": seg["text"],
-                "timestamp": time.strftime("%H:%M:%S"),
-                "language": seg.get("language", ""),
-            }
-            transcript_lines.append(line)
-        emit("transcript_update", line)
-    return {
-        "ok": True,
-        "size": size,
-        "count": audio_chunk_count,
-        "partial": partial_text,
-        "audio_rms": round(float(getattr(stt, "last_audio_rms", 0.0)), 5),
-    }
+    stt.feed_audio(chunk)  # 非阻塞，結果由背景 worker 透過 callback 推送
+    return {"ok": True, "size": size, "count": audio_chunk_count}
 
 
 @socketio.on("audio_record_chunk")
