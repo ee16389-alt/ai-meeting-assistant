@@ -165,6 +165,7 @@ class STTEngine:
         self._last_partial_text = ""
         self._last_audio_rms = 0.0
         self._silence_ms = 0
+        self._last_confirmed_text = ""
 
         self._model = self._create_model(model_size)
         print("[STT] Faster-Whisper 模型載入完成", flush=True)
@@ -220,6 +221,7 @@ class STTEngine:
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
             self._silence_ms = 0
+            self._last_confirmed_text = ""
             self._state = State.RECORDING
             return self._state.value
 
@@ -262,6 +264,7 @@ class STTEngine:
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
             self._silence_ms = 0
+            self._last_confirmed_text = ""
             self._state = State.IDLE
 
     # ── 音頻處理 ──────────────────────────────────────────
@@ -358,6 +361,12 @@ class STTEngine:
                     continue
                 text = _to_traditional(text)
                 text = self._filter_repetitions(text)
+                if not text:
+                    continue
+                # 跨段去重：與上一段完全相同則跳過
+                if text == self._last_confirmed_text:
+                    continue
+                self._last_confirmed_text = text
                 if not text:
                     continue
 
