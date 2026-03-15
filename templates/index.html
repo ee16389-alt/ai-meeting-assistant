@@ -1209,15 +1209,17 @@
                 const previousMeetingName = meetingInput.value.trim();
                 isRecording = false;
                 recordingSessionReady = false;
+                currentState = 'stopped';
+                updateUI();
                 if (mediaRecorder) {
                     mediaRecorder.stop();
                 }
                 cleanupRecordingGraph({ releaseStream: true });
-                await emitWithAck('stop_recording', {}).catch(() => null);
-                
+                emitWithAck('stop_recording', {}).catch(() => null);
+
                 // 強制將狀態切回 idle，確保按鈕恢復
                 currentState = 'idle';
-                
+
                 if (previousMeetingName) {
                     lastMeetingNameUsed = previousMeetingName;
                     lastCompletedMeetingName = previousMeetingName;
