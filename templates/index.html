@@ -459,7 +459,7 @@
         // ── 初始化 ──────────────────────────────────────
         lucide.createIcons();
 
-        const socket = io({ transports: ['polling'] });
+        const socket = io({ transports: ['websocket'] });
         let currentState = 'idle';
         let mediaRecorder = null;
         let audioStream = null;
