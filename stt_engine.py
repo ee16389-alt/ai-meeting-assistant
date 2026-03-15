@@ -153,7 +153,7 @@ def _find_whisper_model_dir() -> Path | None:
 class STTEngine:
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
-    TRANSCRIBE_INTERVAL_MS = 3000  # 固定每隔此時間觸發一次辨識
+    TRANSCRIBE_INTERVAL_MS = 4000  # 固定每隔此時間觸發一次辨識
 
     def __init__(self, model_size: str = "medium"):
         if WhisperModel is None:
@@ -170,7 +170,7 @@ class STTEngine:
         self._result_callback = None
 
         # 背景推論 worker：避免 Whisper 推論阻塞 SocketIO 事件迴圈
-        self._audio_queue: queue.Queue = queue.Queue(maxsize=1)
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=2)
         self._worker = threading.Thread(target=self._transcribe_worker, daemon=True)
         self._worker.start()
 
