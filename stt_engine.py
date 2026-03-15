@@ -176,12 +176,15 @@ class STTEngine:
             model_path = f"Systran/faster-whisper-{model_size}"
             print(f"[STT] 本地模型未找到，下載 {model_path}", flush=True)
 
+        cpu_count = os.cpu_count() or 4
+        # 保留至少 2 個核心給 Flask/SocketIO，避免暫停/停止無反應
+        cpu_threads = max(2, min(6, cpu_count // 2))
         return WhisperModel(
             model_path,
             device="cpu",
             compute_type="int8",
             num_workers=1,
-            cpu_threads=max(2, (os.cpu_count() or 4) - 1),
+            cpu_threads=cpu_threads,
         )
 
     # ── 屬性 ──────────────────────────────────────────────
