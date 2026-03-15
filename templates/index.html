@@ -1196,10 +1196,11 @@
             if (audioContext && audioContext.state === 'suspended') {
                 await audioContext.resume();
             }
-            // 立即更新 UI，不等 ACK
-            socket.emit('resume_recording', {});
             recordingSessionReady = true;
             isRecording = true;
+            currentState = 'recording';
+            updateUI();
+            socket.emit('resume_recording', {});
         }
 
         async function stopRecording() {
