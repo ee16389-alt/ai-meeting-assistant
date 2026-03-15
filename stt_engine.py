@@ -146,9 +146,11 @@ def _find_whisper_model_dir() -> Path | None:
 
 
 class STTEngine:
-    TRANSCRIBE_INTERVAL_MS = 3000   # 每 3 秒批次辨識（small 模型夠快，兼顧即時感與效能）
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003
+    SILENCE_TRIGGER_MS = 500    # 靜音超過此時間立刻觸發辨識
+    MIN_AUDIO_MS = 800           # 最短累積時間，避免片段太短
+    MAX_AUDIO_MS = 6000          # 持續說話時強制觸發，避免等太久
 
     def __init__(self, model_size: str = "medium"):
         if WhisperModel is None:
@@ -162,6 +164,7 @@ class STTEngine:
         self._last_segment_end = 0.0
         self._last_partial_text = ""
         self._last_audio_rms = 0.0
+        self._silence_ms = 0
 
         self._model = self._create_model(model_size)
         print("[STT] Faster-Whisper 模型載入完成", flush=True)
@@ -216,6 +219,7 @@ class STTEngine:
             self._last_segment_end = 0.0
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
+            self._silence_ms = 0
             self._state = State.RECORDING
             return self._state.value
 
@@ -257,6 +261,7 @@ class STTEngine:
             self._last_segment_end = 0.0
             self._last_partial_text = ""
             self._last_audio_rms = 0.0
+            self._silence_ms = 0
             self._state = State.IDLE
 
     # ── 音頻處理 ──────────────────────────────────────────
@@ -267,11 +272,23 @@ class STTEngine:
                 return []
             self._append_pcm_chunk(chunk)
             duration_ms = self._get_buffer_duration_ms()
-            if duration_ms < self.TRANSCRIBE_INTERVAL_MS:
-                self._last_partial_text = ""
+            if duration_ms < self.MIN_AUDIO_MS:
                 return []
+
+            # 更新靜音累計時間
+            chunk_ms = int(len(chunk) / 2 / self.SAMPLE_RATE * 1000)
+            if self._last_audio_rms < self.SILENCE_THRESHOLD:
+                self._silence_ms += chunk_ms
+            else:
+                self._silence_ms = 0
+
+            # 停頓超過閾值或累積太長 → 觸發辨識
+            if self._silence_ms < self.SILENCE_TRIGGER_MS and duration_ms < self.MAX_AUDIO_MS:
+                return []
+
             audio = self._pcm_buffer.copy()
             self._pcm_buffer = np.array([], dtype=np.float32)
+            self._silence_ms = 0
             self._last_partial_text = ""
 
         # 鎖外執行推論，不阻塞其他 feed_audio
