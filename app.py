@@ -459,7 +459,7 @@ def _generate_summary(mode: str, full_text: str):
     if mode == "full":
         system_prompt = (
             "你是一位專業的會議記錄員。請用繁體中文輸出。\n"
-            "請輸出 2-4 句話的精簡摘要，必須包含逐字稿中具體提到的人名、數字、決議或事件。"
+            "請依據逐字稿內容長度輸出適當長度的摘要，必須包含逐字稿中具體提到的人名、數字、決議或事件。"
             + guardrail
         )
     elif mode == "key_points":
