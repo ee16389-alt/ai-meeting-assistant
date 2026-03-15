@@ -31,6 +31,7 @@ def main():
         "--collect-all", "llama_cpp",
         "--collect-all", "opencc",
         "--collect-all", "sherpa_onnx",
+        "--collect-binaries", "sherpa_onnx",
         "--hidden-import", "engineio.async_drivers.threading",
         "--hidden-import", "simple_websocket",
         "--hidden-import", "llama_cpp",

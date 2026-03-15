@@ -258,8 +258,16 @@ async function ensureModels(sendProgress) {
   if (_sherpaEncoderPath(sherpaFinal)) {
     sendProgress({ stage: "sherpa", percent: 97, text: "語音辨識模型已存在，跳過下載" });
   } else if (cfg.sherpaZipDownloadUrl) {
-    sendProgress({ stage: "sherpa", percent: 60, text: "準備下載語音辨識模型（約 220 MB）..." });
-    await downloadSherpaModel(cfg.sherpaZipDownloadUrl, sherpaBase, sendProgress, 60, 37);
+    sendProgress({ stage: "sherpa", percent: 60, text: "準備下載語音辨識模型（約 1 GB）..." });
+    await downloadSherpaModel(cfg.sherpaZipDownloadUrl, sherpaBase, sendProgress, 60, 35);
+    // 解壓後確保目錄名稱正確（tar 可能解出不同層級）
+    if (!_sherpaEncoderPath(sherpaFinal)) {
+      const dirs = fs.readdirSync(sherpaBase, { withFileTypes: true })
+        .filter(d => d.isDirectory() && _sherpaEncoderPath(path.join(sherpaBase, d.name)));
+      if (dirs.length > 0) {
+        fs.renameSync(path.join(sherpaBase, dirs[0].name), sherpaFinal);
+      }
+    }
   } else {
     sendProgress({ stage: "sherpa", percent: 97, text: "語音辨識模型將於首次啟動時載入..." });
   }
