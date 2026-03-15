@@ -153,7 +153,7 @@ class STTEngine:
     SILENCE_THRESHOLD = 0.003
     SILENCE_TRIGGER_MS = 500    # 靜音超過此時間立刻觸發辨識
     MIN_AUDIO_MS = 800           # 最短累積時間，避免片段太短
-    MAX_AUDIO_MS = 2000          # 持續說話時強制觸發，避免等太久
+    MAX_AUDIO_MS = 3500          # 持續說話時強制觸發，避免等太久
 
     def __init__(self, model_size: str = "medium"):
         if WhisperModel is None:
