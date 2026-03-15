@@ -405,7 +405,7 @@ def handle_export_summary(data):
     transcript_override = data.get("transcript_override", "").strip()
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
-        "key_points": data.get("summary_key", "").strip(),,
+        "key_points": data.get("summary_key", "").strip(),
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
