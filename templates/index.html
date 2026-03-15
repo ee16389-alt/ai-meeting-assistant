@@ -1039,13 +1039,12 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
-                meetingInput.focus();
+                setTimeout(() => meetingInput.focus(), 50);
                 return;
             }
             if (lastMeetingNameUsed && meetingName === lastMeetingNameUsed) {
                 alert(t('alert_need_new_meeting_name'));
-                meetingInput.focus();
-                meetingInput.select();
+                setTimeout(() => { meetingInput.focus(); meetingInput.select(); }, 50);
                 return;
             }
 
@@ -1081,7 +1080,7 @@
             const meetingName = meetingInput.value.trim();
             if (!meetingName) {
                 alert(t('alert_need_meeting_name'));
-                meetingInput.focus();
+                setTimeout(() => meetingInput.focus(), 50);
                 isBusy = false;
                 return;
             }
@@ -1188,7 +1187,8 @@
             }
             isRecording = false;
             recordingSessionReady = false;
-            // 立即更新 UI，不等 ACK（audio_chunk 排隊會導致 ACK timeout）
+            currentState = 'paused';
+            updateUI();
             socket.emit('pause_recording', {});
         }
 

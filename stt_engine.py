@@ -268,7 +268,7 @@ class STTEngine:
             self._append_pcm_chunk(chunk)
             duration_ms = self._get_buffer_duration_ms()
             if duration_ms < self.TRANSCRIBE_INTERVAL_MS:
-                self._last_partial_text = "辨識中..."
+                self._last_partial_text = ""
                 return []
             audio = self._pcm_buffer.copy()
             self._pcm_buffer = np.array([], dtype=np.float32)
