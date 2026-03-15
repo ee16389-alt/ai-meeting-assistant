@@ -114,6 +114,17 @@ function ensureBackendModelCompatPath() {
   }
 }
 
+// ── Whisper 模型檔案清單（Systran/faster-whisper-medium）──
+const WHISPER_HF_REPO = "Systran/faster-whisper-medium";
+const WHISPER_MODEL_FILES = [
+  { name: "config.json",             sizeMb: 0.001 },
+  { name: "preprocessor_config.json",sizeMb: 0.001 },
+  { name: "tokenizer.json",          sizeMb: 2     },
+  { name: "vocabulary.txt",          sizeMb: 1     },
+  { name: "model.bin",               sizeMb: 769   },  // 最大，排最後
+];
+const WHISPER_TOTAL_MB = WHISPER_MODEL_FILES.reduce((s, f) => s + f.sizeMb, 0);
+
 // ── 下載邏輯 ───────────────────────────────────────────
 
 function downloadFile(url, destPath, onProgress) {
@@ -155,10 +166,39 @@ function downloadFile(url, destPath, onProgress) {
         res.on("error", reject);
       });
       req.on("error", reject);
-      req.setTimeout(30000, () => { req.destroy(); reject(new Error("Request timeout")); });
+      req.setTimeout(60000, () => { req.destroy(); reject(new Error("Request timeout")); });
     };
     follow(url, 0);
   });
+}
+
+async function downloadWhisperModel(destDir, sendProgress, progressBase, progressRange) {
+  fs.mkdirSync(destDir, { recursive: true });
+  let completedMb = 0;
+
+  for (let i = 0; i < WHISPER_MODEL_FILES.length; i++) {
+    const { name, sizeMb } = WHISPER_MODEL_FILES[i];
+    const destPath = path.join(destDir, name);
+
+    if (fs.existsSync(destPath) && fs.statSync(destPath).size > 100) {
+      completedMb += sizeMb;
+      continue;
+    }
+
+    const url = `https://huggingface.co/${WHISPER_HF_REPO}/resolve/main/${name}`;
+    await downloadFile(url, destPath, ({ downloaded, total }) => {
+      const fileMb = downloaded / 1024 / 1024;
+      const totalProgress = completedMb + fileMb;
+      const pct = progressBase + Math.floor((totalProgress / WHISPER_TOTAL_MB) * progressRange);
+      const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
+      sendProgress({
+        stage: "whisper",
+        percent: Math.min(progressBase + progressRange - 1, pct),
+        text: `下載語音辨識模型 (${i + 1}/${WHISPER_MODEL_FILES.length}) ${name}: ${fileMb.toFixed(0)} MB ${totalMb}`,
+      });
+    });
+    completedMb += sizeMb;
+  }
 }
 
 function extractZip(zipPath, destDir) {
@@ -205,63 +245,28 @@ async function ensureModels(sendProgress) {
     sendProgress({ stage: "gguf", percent: 60, text: "語言模型已存在，跳過下載" });
   }
 
-  // ── 下載 Whisper 模型（如有提供 zip 網址）──────────
+  // ── 下載 Whisper 模型（直接從 HuggingFace 逐檔下載）──
   const whisperDirName = cfg.whisperModelDirName || "faster-whisper-medium";
   const whisperBase = path.join(base, "whisper");
   const whisperFinal = path.join(whisperBase, whisperDirName);
-  let whisperModelDir = null;
 
   if (fs.existsSync(path.join(whisperFinal, "model.bin"))) {
-    whisperModelDir = whisperFinal;
-    sendProgress({ stage: "whisper", percent: 95, text: "語音辨識模型已存在，跳過下載" });
-  } else if (cfg.whisperZipDownloadUrl) {
-    fs.mkdirSync(whisperBase, { recursive: true });
-    const zipPath = path.join(base, "whisper.zip");
-    sendProgress({ stage: "whisper", percent: 60, text: "下載語音辨識模型 (Whisper)..." });
-    await downloadFile(cfg.whisperZipDownloadUrl, zipPath, ({ percent, downloaded, total }) => {
-      const mb = (downloaded / 1024 / 1024).toFixed(0);
-      const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
-      sendProgress({
-        stage: "whisper",
-        percent: percent >= 0 ? 60 + Math.floor(percent * 0.35) : -1,
-        text: `下載語音辨識模型... ${mb} MB ${totalMb}`,
-      });
-    });
-
-    sendProgress({ stage: "whisper", percent: 95, text: "解壓縮語音辨識模型..." });
-    await extractZip(zipPath, whisperBase);
-    try { fs.unlinkSync(zipPath); } catch (_) {}
-
-    // 尋找解壓後含 model.bin 的目錄並正規化名稱
-    if (!fs.existsSync(path.join(whisperFinal, "model.bin"))) {
-      try {
-        for (const entry of fs.readdirSync(whisperBase)) {
-          const full = path.join(whisperBase, entry);
-          if (fs.statSync(full).isDirectory() && fs.existsSync(path.join(full, "model.bin"))) {
-            if (full !== whisperFinal) fs.renameSync(full, whisperFinal);
-            break;
-          }
-        }
-      } catch (_) {}
-    }
-    if (!fs.existsSync(path.join(whisperFinal, "model.bin"))) {
-      throw new Error("Whisper 模型解壓縮後結構異常，請重新嘗試。");
-    }
-    whisperModelDir = whisperFinal;
+    sendProgress({ stage: "whisper", percent: 97, text: "語音辨識模型已存在，跳過下載" });
+  } else {
+    sendProgress({ stage: "whisper", percent: 50, text: "準備下載語音辨識模型（約 770 MB）..." });
+    await downloadWhisperModel(whisperFinal, sendProgress, 50, 47);
   }
-  // 若無 zip URL，由 Python stt_engine 自行透過 HuggingFace 下載
 
   sendProgress({ stage: "done", percent: 100, text: "模型準備完成，正在啟動..." });
-  return { ggufPath, whisperModelDir };
+  return { ggufPath, whisperModelDir: whisperFinal };
 }
 
 // ── 後端啟動 ───────────────────────────────────────────
 
-function waitForServer(timeoutMs = 600000, onStatus) {
-  const start = Date.now();
+function waitForServer() {
+  // 無 timeout 限制，持續等到後端就緒或進程結束
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
-      // 檢查進程是否還活著
       if (backendProcess && backendProcess.exitCode !== null) {
         let msg = `後端程式已意外終止 (代碼: ${backendProcess.exitCode})。`;
         if (backendRecentLogs.length) {
@@ -282,10 +287,6 @@ function waitForServer(timeoutMs = 600000, onStatus) {
               reject(new Error(`STT 初始化失敗：${json.stt_error}`));
               return;
             }
-            // 模型下載中，通知載入畫面更新文字
-            if (json.ok && json.stt_initializing && onStatus) {
-              onStatus("正在下載語音辨識模型，請稍候（約 1-5 分鐘）...");
-            }
           } catch (_) {}
           retry();
         });
@@ -293,10 +294,7 @@ function waitForServer(timeoutMs = 600000, onStatus) {
       req.on("error", retry);
       req.setTimeout(10000, () => { req.destroy(); retry(); });
     };
-    const retry = () => {
-      if (Date.now() - start > timeoutMs) { reject(new Error("Backend startup timeout")); return; }
-      setTimeout(tryOnce, 1500);
-    };
+    const retry = () => setTimeout(tryOnce, 1500);
     tryOnce();
   });
 }
@@ -356,7 +354,7 @@ p  { font-size:0.8rem; color:#6b7280; margin-bottom:20px; }
 </style></head>
 <body>
   <h3>AI 會議助理 — 首次啟動</h3>
-  <p>正在下載 AI 模型（約 2 GB），下載完成後即可離線使用。</p>
+  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~770 MB），下載完成後即可離線使用。</p>
   <div class="track"><div id="bar" class="bar"></div></div>
   <div id="status" class="status">準備中...</div>
   <script>
@@ -452,13 +450,7 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
   startBackend(modelEnv);
 
   try {
-    await waitForServer(600000, (msg) => {
-      if (!mainWin.isDestroyed()) {
-        mainWin.webContents.executeJavaScript(
-          `document.querySelector('.h') && (document.querySelector('.h').textContent = ${JSON.stringify(msg)})`
-        ).catch(() => {});
-      }
-    });
+    await waitForServer();
     await mainWin.loadURL(BACKEND_URL);
   } catch (e) {
     let msg = `後端服務無法就緒。\n\n${e.message}`;
