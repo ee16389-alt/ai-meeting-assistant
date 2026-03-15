@@ -7,7 +7,7 @@ function isTrue(value) {
 }
 
 const bundleGguf = isTrue(process.env.BUNDLE_GGUF);
-const bundleSherpaModels = isTrue(process.env.BUNDLE_SHERPA_MODELS);
+const bundleWhisperModels = isTrue(process.env.BUNDLE_WHISPER_MODELS);
 const bundleOllamaModels = isTrue(process.env.BUNDLE_OLLAMA_MODELS);
 const artifactSuffix = String(process.env.BUILD_ARTIFACT_SUFFIX || "");
 
@@ -27,10 +27,10 @@ if (bundleGguf) {
   });
 }
 
-if (bundleSherpaModels) {
+if (bundleWhisperModels) {
   extraResources.push({
-    from: "models/sherpa-onnx",
-    to: "models/sherpa-onnx",
+    from: "models/whisper",
+    to: "models/whisper",
     filter: ["**/*"],
   });
 }
