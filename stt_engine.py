@@ -52,9 +52,12 @@ _HALLUCINATION_PATTERNS = re.compile(
     r"(thank you for watching|字幕由|請訂閱|訂閱頻道|點讚|不吝|掌聲|♪|♫|music|ambient|"
     r"by\s+\w+\s+caption|subtitles?\s+by|"
     r"台灣繁體中文會議紀錄|包含商業術語與英文詞彙|以下是台灣|"
-    r"翻譯中|翻唱中|字幕製作)",
+    r"翻譯中|翻唱中|字幕製作|暢時暢時|臺灣繁號|繁號五十七)",
     re.IGNORECASE,
 )
+
+# 僅含標點或單一符號的幻覺（不含任何中英文字）
+_PUNCTUATION_ONLY = re.compile(r'^[\s\W]+$')
 
 
 def _is_frozen() -> bool:
@@ -357,7 +360,7 @@ class STTEngine:
             results = []
             for seg in segments_iter:
                 text = seg.text.strip()
-                if not text or _HALLUCINATION_PATTERNS.search(text):
+                if not text or _HALLUCINATION_PATTERNS.search(text) or _PUNCTUATION_ONLY.match(text):
                     continue
                 text = _to_traditional(text)
                 text = self._filter_repetitions(text)

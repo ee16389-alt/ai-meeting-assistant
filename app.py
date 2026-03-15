@@ -270,13 +270,6 @@ def handle_audio_chunk(data):
             }
             transcript_lines.append(line)
         emit("transcript_update", line)
-
-        # 非同步校對
-        idx = line["index"]
-        original_text = line["text"]
-        socketio.start_background_task(
-            _proofread_line, idx, original_text
-        )
     return {
         "ok": True,
         "size": size,
@@ -454,7 +447,6 @@ def _finish_transcription(remaining: np.ndarray):
             }
             transcript_lines.append(line)
         socketio.emit("transcript_update", line)
-        socketio.start_background_task(_proofread_line, line["index"], line["text"])
 
 
 def _generate_summary(mode: str, full_text: str):

@@ -222,10 +222,18 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stream=True,
             )
+            accumulated = ""
             for chunk in stream:
                 delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
                 if delta:
+                    accumulated += delta
                     yield delta
+                    # 偵測循環：最近 100 字有重複片段則停止
+                    if len(accumulated) > 200:
+                        tail = accumulated[-100:]
+                        half = tail[:50]
+                        if tail.count(half) >= 2:
+                            break
         except Exception:
             # Fallback 模式
             prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}\n\nAssistant:\n"
@@ -236,10 +244,17 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 stop=["User:", "\nSystem:"],
                 stream=True,
             )
+            accumulated = ""
             for chunk in stream:
                 text = chunk.get("choices", [{}])[0].get("text", "")
                 if text:
+                    accumulated += text
                     yield text
+                    if len(accumulated) > 200:
+                        tail = accumulated[-100:]
+                        half = tail[:50]
+                        if tail.count(half) >= 2:
+                            break
 
 
 def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
