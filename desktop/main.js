@@ -120,8 +120,9 @@ function ensureBackendModelCompatPath() {
   }
 }
 
-// ── Sherpa-ONNX 模型大小估計（用於進度顯示）──
+// ── 模型大小估計（用於進度顯示）──
 const SHERPA_TOTAL_MB = 220;
+const GGUF_TOTAL_MB = 2500; // Phi-4-mini Q4_K_M ≈ 2.5 GB
 
 // ── 下載邏輯 ───────────────────────────────────────────
 
@@ -164,7 +165,8 @@ function downloadFile(url, destPath, onProgress) {
         res.on("error", reject);
       });
       req.on("error", reject);
-      req.setTimeout(60000, () => { req.destroy(); reject(new Error("Request timeout")); });
+      // 僅在完全無資料流動超過 10 分鐘時 timeout（大型模型下載需要充裕時間）
+      req.setTimeout(600000, () => { req.destroy(); reject(new Error("Request timeout")); });
     };
     follow(url, 0);
   });
@@ -235,7 +237,7 @@ async function ensureModels(sendProgress) {
   // ── 下載 GGUF ──────────────────────────────────────
   if (!fs.existsSync(ggufPath)) {
     fs.mkdirSync(ggufDir, { recursive: true });
-    sendProgress({ stage: "gguf", percent: 0, text: `下載語言模型 (${cfg.ggufFilename})...` });
+    sendProgress({ stage: "gguf", percent: 0, text: `下載語言模型（約 ${GGUF_TOTAL_MB} MB）...` });
     await downloadFile(cfg.ggufDownloadUrl, ggufPath, ({ percent, downloaded, total }) => {
       const mb = (downloaded / 1024 / 1024).toFixed(0);
       const totalMb = total > 0 ? `/ ${(total / 1024 / 1024).toFixed(0)} MB` : "";
