@@ -535,6 +535,7 @@
         let transcriptOpsLockedBySummary = false;
         let summaryRequestInFlight = 0;
         let hasExportedCurrentSession = false;
+        let currentRecordingToken = '';
         let diagSentChunks = 0;
         let diagAckChunks = 0;
         let diagAckErrors = 0;
@@ -868,6 +869,8 @@
 
 
         socket.on('transcript_update', (data) => {
+            // 過濾舊 session 的殘留事件
+            if (data.token && currentRecordingToken && data.token !== currentRecordingToken) return;
             clearPartialLine();
             addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
             diagTranscriptLines += 1;
@@ -1210,6 +1213,7 @@
                 if (!startAck || !startAck.ok) {
                     throw new Error((startAck && startAck.error) || '後端未接受錄音開始請求');
                 }
+                currentRecordingToken = startAck.recording_token || '';
                 recordingSessionReady = true;
                 lastCompletedMeetingName = '';
                 hasExportedCurrentSession = false;

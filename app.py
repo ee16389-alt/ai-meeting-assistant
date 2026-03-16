@@ -4,6 +4,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 
 import numpy as np
 
@@ -116,6 +117,7 @@ builtins.print = _capturing_print
 def _on_stt_segments(segments: list[dict]):
     """STT 背景 worker 完成推論後的回呼，透過 socketio 推送結果"""
     sid = _active_sid
+    token = _recording_token
     print(f"[CB] _on_stt_segments called: {len(segments)} seg(s), sid={repr(sid)}", flush=True)
     if not sid:
         print("[CB] no active sid, dropping", flush=True)
@@ -127,6 +129,7 @@ def _on_stt_segments(segments: list[dict]):
                 "text": seg["text"],
                 "timestamp": time.strftime("%H:%M:%S"),
                 "language": seg.get("language", ""),
+                "token": token,
             }
             transcript_lines.append(line)
         print(f"[CB] emit transcript_update: {repr(line['text'][:40])}", flush=True)
@@ -165,6 +168,7 @@ _transcript_lock = threading.Lock()
 proofread_index = 0  # 追蹤下一個待校對的行號
 audio_chunk_count = 0
 _active_sid: str = ""  # 目前錄音的 client session id
+_recording_token: str = ""  # 每次錄音生成的唯一 token，前端用來過濾舊事件
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
@@ -260,8 +264,9 @@ def handle_connect():
 
 @socketio.on("start_recording")
 def handle_start(data=None):
-    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid
+    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token
     _active_sid = request.sid
+    _recording_token = uuid.uuid4().hex  # 每場錄音唯一 token
     with _transcript_lock:
         transcript_lines = []
         proofread_index = 0
@@ -296,7 +301,7 @@ def handle_start(data=None):
         emit("state_changed", {"state": state})
         return {"ok": False, "state": state, "error": _stt_init_error or "未知錯誤"}
     emit("state_changed", {"state": state})
-    return {"ok": True, "state": state}
+    return {"ok": True, "state": state, "recording_token": _recording_token}
 
 
 @socketio.on("audio_chunk")
@@ -398,10 +403,11 @@ def handle_stop():
     # 原子操作：立即設為 IDLE 並取走剩餘 buffer，UI 立即響應
     remaining = stt.request_stop()
     stop_sid = _active_sid
+    stop_token = _recording_token
     socketio.emit("transcript_partial_clear", room=stop_sid)
     socketio.emit("state_changed", {"state": "idle"}, room=stop_sid)
     # 非同步處理剩餘音頻，不阻塞回應
-    socketio.start_background_task(_finish_transcription, remaining, stop_sid)
+    socketio.start_background_task(_finish_transcription, remaining, stop_sid, stop_token)
     return {"ok": True, "state": "idle"}
 
 
@@ -500,7 +506,7 @@ def _proofread_line(index: int, original_text: str, sid: str):
         }, room=sid)
 
 
-def _finish_transcription(remaining: np.ndarray, sid: str):
+def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
     """背景完成停止後剩餘音頻的轉寫"""
     if remaining is None or remaining.size == 0:
         return
@@ -512,6 +518,7 @@ def _finish_transcription(remaining: np.ndarray, sid: str):
                 "text": seg["text"],
                 "timestamp": time.strftime("%H:%M:%S"),
                 "language": seg.get("language", ""),
+                "token": token,
             }
             transcript_lines.append(line)
         socketio.emit("transcript_update", line, room=sid)
