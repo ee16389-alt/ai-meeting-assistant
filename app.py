@@ -568,14 +568,18 @@ def _generate_summary(mode: str, full_text: str):
 
     # 告訴前端準備開始串流
     socketio.emit("summary_start", {"mode": mode})
-    
+
     from cognition import _call_model_stream
     accumulated = ""
-    for chunk in _call_model_stream(system_prompt, full_text):
-        accumulated += chunk
-        socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
+    try:
+        for chunk in _call_model_stream(system_prompt, full_text):
+            accumulated += chunk
+            socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
+    except Exception as e:
+        print(f"[Summary] 摘要生成例外: {e}", flush=True)
+        socketio.emit("error", {"message": f"摘要生成失敗：{e}"})
 
-    # 最終傳送完整結果（轉繁體中文後供快取）
+    # 無論成功或失敗，一定送出 summary_result 讓前端解鎖計數器
     accumulated = _to_traditional(accumulated)
     socketio.emit("summary_result", {"mode": mode, "content": accumulated})
 

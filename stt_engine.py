@@ -377,9 +377,18 @@ class STTEngine:
 
         if is_ep or stale:
             reason = "endpoint" if is_ep else "stale_timeout"
-            print(f"[STT] flush ({reason}), text={repr(text)}", flush=True)
-            if text:
-                self._emit_text(text)
+            # 補短暫 padding 把 encoder buffer 最後幾幀刷出來，
+            # 避免最後 2-5 字停在 encoder queue 裡被 reset 丟棄
+            tail = np.zeros(int(0.3 * self.SAMPLE_RATE), dtype=np.float32)
+            stream.accept_waveform(self.SAMPLE_RATE, tail)
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode_stream(stream)
+            final_result = self._recognizer.get_result(stream)
+            final_text = (final_result.text if hasattr(final_result, "text") else str(final_result)).strip()
+            emit_text = final_text or text
+            print(f"[STT] flush ({reason}), text={repr(emit_text)}", flush=True)
+            if emit_text:
+                self._emit_text(emit_text)
             self._recognizer.reset(stream)
             self._last_seen_text = ""
             self._last_text_change_time = 0.0
@@ -403,7 +412,7 @@ class STTEngine:
     def _flush_stream(self, stream) -> None:
         """送入 tail padding，刷出最後未送出的辨識結果"""
         try:
-            tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
+            tail = np.zeros(int(1.0 * self.SAMPLE_RATE), dtype=np.float32)
             stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)

@@ -420,6 +420,22 @@
         </footer>
     </div>
 
+    <!-- 未匯出提醒 modal -->
+    <div id="unsaved-modal" class="hidden fixed inset-0 z-50 items-center justify-center px-4">
+        <div class="absolute inset-0 bg-slate-900/40"></div>
+        <div class="relative bg-white rounded-2xl border border-orange-200 shadow-xl p-6 w-full max-w-sm">
+            <div class="flex items-center gap-2 mb-3">
+                <i data-lucide="alert-triangle" class="w-5 h-5 text-orange-500 flex-shrink-0"></i>
+                <div class="text-base font-semibold text-slate-900">尚未匯出上一場會議</div>
+            </div>
+            <div id="unsaved-modal-body" class="text-sm text-slate-600 mb-5 leading-relaxed"></div>
+            <div class="flex gap-3">
+                <button onclick="confirmUnsavedProceed()" class="flex-1 bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all">直接開始新會議</button>
+                <button onclick="dismissUnsavedModal()" class="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 transition-all">返回匯出</button>
+            </div>
+        </div>
+    </div>
+
     <div id="contact-modal" class="hidden fixed inset-0 z-50 items-center justify-center">
         <div class="absolute inset-0 bg-slate-900/30" onclick="toggleContact()"></div>
         <div class="relative bg-white rounded-2xl border border-orange-100 shadow-xl p-6 w-[320px]">
@@ -518,6 +534,7 @@
         let lastMeetingNameUsed = '';
         let transcriptOpsLockedBySummary = false;
         let summaryRequestInFlight = 0;
+        let hasExportedCurrentSession = false;
         let diagSentChunks = 0;
         let diagAckChunks = 0;
         let diagAckErrors = 0;
@@ -944,6 +961,7 @@
         });
 
         socket.on('export_ready', (data) => {
+            hasExportedCurrentSession = true;
             if (data.files && Array.isArray(data.files)) {
                 const firstPath = data.files[0] && data.files[0].saved_path;
                 if (firstPath) {
@@ -1072,6 +1090,39 @@
                 return;
             }
 
+            // 若上一場有逐字稿或摘要且尚未匯出，提醒使用者
+            const hasPrevTranscript = transcriptRawLines.length > 0;
+            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            if ((hasPrevTranscript || hasPrevSummary) && !hasExportedCurrentSession) {
+                const items = [];
+                if (hasPrevTranscript) items.push('逐字稿');
+                if (hasPrevSummary) items.push('AI 摘要');
+                const modal = document.getElementById('unsaved-modal');
+                document.getElementById('unsaved-modal-body').textContent =
+                    `上一場會議的${items.join('與')}尚未匯出，直接開始新會議將會清除這些內容。`;
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                lucide.createIcons();
+                return;
+            }
+
+            _doStartCountdown();
+        }
+
+        function confirmUnsavedProceed() {
+            const modal = document.getElementById('unsaved-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            _doStartCountdown();
+        }
+
+        function dismissUnsavedModal() {
+            const modal = document.getElementById('unsaved-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function _doStartCountdown() {
             const btn = document.getElementById('main-btn');
             isCountdown = true;
             btn.disabled = true;
@@ -1161,6 +1212,7 @@
                 }
                 recordingSessionReady = true;
                 lastCompletedMeetingName = '';
+                hasExportedCurrentSession = false;
                 isRecording = true;
                 meetingInput.disabled = true;
                 document.getElementById('save-audio').disabled = true;
@@ -1581,14 +1633,28 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             });
         }
 
+        let _summaryTimeoutId = null;
         function beginSummaryRequest(count = 1) {
             summaryRequestInFlight += Math.max(1, Number(count) || 1);
             setTranscriptOpsLocked(true);
+            // 安全 timeout：120 秒後若後端仍無回應，強制解鎖
+            if (_summaryTimeoutId) clearTimeout(_summaryTimeoutId);
+            _summaryTimeoutId = setTimeout(() => {
+                if (summaryRequestInFlight > 0) {
+                    summaryRequestInFlight = 0;
+                    setTranscriptOpsLocked(false);
+                    showToast('摘要請求逾時，請重新點擊。');
+                }
+            }, 120000);
         }
 
         function endSummaryRequest() {
             summaryRequestInFlight = Math.max(0, summaryRequestInFlight - 1);
             setTranscriptOpsLocked(summaryRequestInFlight > 0);
+            if (summaryRequestInFlight === 0 && _summaryTimeoutId) {
+                clearTimeout(_summaryTimeoutId);
+                _summaryTimeoutId = null;
+            }
         }
 
         function clearSummaryLocksForNewRecording() {
