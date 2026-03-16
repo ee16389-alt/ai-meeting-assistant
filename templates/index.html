@@ -1906,13 +1906,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             }
             summaryCache[mode] = null;
             if (summaryRequestInFlight > 0) {
-                const loadingTitle = summaryTitle(mode);
-                document.getElementById('summary-container').innerHTML = `
-                    <div class="h-full flex flex-col items-center justify-center space-y-4">
-                        <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
-                        <p class="text-orange-600 font-medium animate-pulse">${tFormat('summary_loading_for', { title: loadingTitle })}</p>
-                    </div>
-                `;
+                showToast('摘要生成中，請稍候完成後再點擊。');
                 return;
             }
             beginSummaryRequest(1);

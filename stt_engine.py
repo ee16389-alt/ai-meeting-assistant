@@ -377,9 +377,9 @@ class STTEngine:
 
         if is_ep or stale:
             reason = "endpoint" if is_ep else "stale_timeout"
-            # Paraformer-bilingual chunk_size = 320ms，加 0.8s padding（> 2 chunks）
-            # 確保 encoder buffer 最後幾幀完整刷出，is_ready 一定能觸發
-            tail = np.zeros(int(0.8 * self.SAMPLE_RATE), dtype=np.float32)
+            # Paraformer-bilingual chunk_size = 320ms，加 1.5s padding（> 4 chunks）
+            # 確保 encoder buffer + right_context 最後幾幀完整刷出
+            tail = np.zeros(int(1.5 * self.SAMPLE_RATE), dtype=np.float32)
             stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
@@ -393,6 +393,7 @@ class STTEngine:
             self._recognizer.reset(stream)
             self._last_seen_text = ""
             self._last_text_change_time = 0.0
+            self._last_confirmed_text = ""  # 清除跨段去重記憶，避免新段開頭被誤判重複
             with self._lock:
                 self._last_partial_text = ""
         else:
