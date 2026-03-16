@@ -700,7 +700,7 @@ def proofread_text(text: str) -> str:
                 {"role": "user", "content": text},
             ],
             temperature=TEMPERATURE,
-            max_tokens=min(len(text) * 2 + 64, 256),
+            max_tokens=min(len(text) * 3 + 128, 1024),
         )
         return (
             resp.get("choices", [{}])[0]
