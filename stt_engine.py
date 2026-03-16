@@ -378,6 +378,8 @@ class STTEngine:
 
         if is_ep or stale:
             reason = "endpoint" if is_ep else "stale_timeout"
+            # 保存觸發 endpoint 的 chunk，reset 後回放以補救段落邊界漏字
+            boundary_chunk = samples.copy()
             # Paraformer-bilingual chunk_size = 320ms，加 1.5s padding（> 4 chunks）
             # 確保 encoder buffer + right_context 最後幾幀完整刷出
             tail = np.zeros(int(1.5 * self.SAMPLE_RATE), dtype=np.float32)
@@ -397,6 +399,16 @@ class STTEngine:
             self._last_confirmed_text = ""  # 清除跨段去重記憶，避免新段開頭被誤判重複
             with self._lock:
                 self._last_partial_text = ""
+            # 回放 boundary chunk：該 chunk 可能含有下一段開頭的音訊
+            # 讓 encoder 從這裡熱身，避免新段前幾字因上下文不足而丟失
+            stream.accept_waveform(self.SAMPLE_RATE, boundary_chunk)
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode_stream(stream)
+            warmup_result = self._recognizer.get_result(stream)
+            warmup_text = (warmup_result.text if hasattr(warmup_result, "text") else str(warmup_result)).strip()
+            if warmup_text:
+                self._last_seen_text = warmup_text
+                self._last_text_change_time = time.monotonic()
         else:
             trad = _to_traditional(text) if text else ""
             with self._lock:
