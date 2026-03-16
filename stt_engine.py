@@ -166,6 +166,7 @@ class STTEngine:
         self._last_confirmed_text = ""
         self._last_audio_rms = 0.0
         self._result_callback = None
+        self._partial_callback = None
         self._current_speaker = 1
         self._last_segment_end = 0.0
         self._time_offset_sec = 0.0
@@ -176,7 +177,7 @@ class STTEngine:
         # 時間 fallback：偵測文字停止變化
         self._last_seen_text = ""
         self._last_text_change_time = 0.0
-        self._TEXT_STALE_TIMEOUT = 2.0  # 文字超過 2 秒沒變化 → 強制輸出
+        self._TEXT_STALE_TIMEOUT = 1.5  # 文字超過 1.5 秒沒變化 → 強制輸出
 
         # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
         self._audio_queue: queue.Queue = queue.Queue(maxsize=300)
@@ -215,8 +216,8 @@ class STTEngine:
             decoding_method="greedy_search",
             enable_endpoint_detection=True,
             rule1_min_trailing_silence=2.4,
-            rule2_min_trailing_silence=1.2,
-            rule3_min_utterance_length=20,
+            rule2_min_trailing_silence=0.8,
+            rule3_min_utterance_length=10,
         )
 
     # ── 屬性 ──────────────────────────────────────────────
@@ -290,6 +291,10 @@ class STTEngine:
     def set_result_callback(self, cb):
         """設定辨識結果回呼，由推論執行緒呼叫"""
         self._result_callback = cb
+
+    def set_partial_callback(self, cb):
+        """設定即時 partial text 回呼"""
+        self._partial_callback = cb
 
     # ── 音頻處理 ──────────────────────────────────────────
 
@@ -373,8 +378,15 @@ class STTEngine:
             with self._lock:
                 self._last_partial_text = ""
         else:
+            trad = _to_traditional(text) if text else ""
             with self._lock:
-                self._last_partial_text = _to_traditional(text) if text else ""
+                changed = trad != self._last_partial_text
+                self._last_partial_text = trad
+            if changed and self._partial_callback:
+                try:
+                    self._partial_callback(trad)
+                except Exception as e:
+                    print(f"[STT] partial callback 錯誤: {e}", flush=True)
 
     def transcribe_audio(self, audio: np.ndarray) -> list[dict]:
         """相容舊介面（stop 時呼叫），sherpa-onnx 串流版不需要"""

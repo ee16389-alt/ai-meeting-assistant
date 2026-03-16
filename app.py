@@ -119,11 +119,20 @@ def _on_stt_segments(segments: list[dict]):
         socketio.emit("transcript_update", line, room=sid)
 
 
+def _on_stt_partial(text: str):
+    """即時 partial text 回呼"""
+    sid = _active_sid
+    if not sid:
+        return
+    socketio.emit("transcript_partial", {"text": text}, room=sid)
+
+
 def _init_stt_background():
     global stt, _stt_init_error
     try:
         instance = STTEngine(model_size="base")
         instance.set_result_callback(_on_stt_segments)
+        instance.set_partial_callback(_on_stt_partial)
         stt = instance
         print("[STT] 模型初始化完成，後端就緒", flush=True)
     except Exception as e:
