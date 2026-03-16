@@ -1227,24 +1227,7 @@
                     mediaRecorder.start(1000);
                 }
 
-                // 先通知伺服器再啟動錄音，確保伺服器已就緒
-                const startAck = await emitWithAck('start_recording', {
-                    meeting_name: meetingName,
-                    save_audio: saveAudio,
-                    language_mode: currentLangMode,
-                });
-                if (!startAck || !startAck.ok) {
-                    throw new Error((startAck && startAck.error) || '後端未接受錄音開始請求');
-                }
-                currentRecordingToken = startAck.recording_token || '';
-                recordingSessionReady = true;
-                lastCompletedMeetingName = '';
-                hasExportedCurrentSession = false;
-                isRecording = true;
-                meetingInput.disabled = true;
-                document.getElementById('save-audio').disabled = true;
-
-                // 清空逐字稿區域
+                // 立即清空上一場資料，讓使用者馬上看到乾淨畫面（不等後端 ack）
                 const container = document.getElementById('transcript-container');
                 container.innerHTML = '';
                 clearPartialLine();
@@ -1264,9 +1247,10 @@
                 summaryCache = { full: null, key_points: null };
                 summaryCacheSourceText = '';
                 summaryViewMode = 'single';
+                activeSingleSummaryMode = 'full';
                 _showRegenerateBtn(false);
                 clearSummaryLocksForNewRecording();
-                // 重置摘要區域
+                currentRecordingToken = '';
                 document.getElementById('summary-container').innerHTML = `
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-300 text-center p-10">
                         <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-10"></i>
@@ -1274,6 +1258,23 @@
                     </div>
                 `;
                 lucide.createIcons();
+
+                // 再通知伺服器啟動錄音
+                const startAck = await emitWithAck('start_recording', {
+                    meeting_name: meetingName,
+                    save_audio: saveAudio,
+                    language_mode: currentLangMode,
+                });
+                if (!startAck || !startAck.ok) {
+                    throw new Error((startAck && startAck.error) || '後端未接受錄音開始請求');
+                }
+                currentRecordingToken = startAck.recording_token || '';
+                recordingSessionReady = true;
+                lastCompletedMeetingName = '';
+                hasExportedCurrentSession = false;
+                isRecording = true;
+                meetingInput.disabled = true;
+                document.getElementById('save-audio').disabled = true;
             } catch (err) {
                 cleanupRecordingGraph();
                 updateMicDiag('失敗', err.message || String(err));
