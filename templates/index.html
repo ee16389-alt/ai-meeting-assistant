@@ -859,6 +859,11 @@
         });
 
         socket.on('state_changed', (data) => {
+            // 若後端認為仍在錄音，但前端已停止（重連競態條件），自動同步停止
+            if ((data.state === 'recording' || data.state === 'paused') && !isRecording) {
+                socket.emit('stop_recording', {}, () => null);
+                return;
+            }
             currentState = data.state;
             recordingSessionReady = data.state === 'recording' || data.state === 'paused';
             if (data.stt_models) {
