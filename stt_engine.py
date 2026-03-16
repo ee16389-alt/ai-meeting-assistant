@@ -203,7 +203,7 @@ class STTEngine:
         tokens = str(local_dir / "tokens.txt")
 
         cpu_count = os.cpu_count() or 4
-        num_threads = max(2, min(4, cpu_count // 2))
+        num_threads = max(2, min(6, cpu_count // 2))
 
         print(f"[STT] 使用本地模型: {local_dir}", flush=True)
         return sherpa_onnx.OnlineRecognizer.from_paraformer(
@@ -213,7 +213,8 @@ class STTEngine:
             num_threads=num_threads,
             sample_rate=self.SAMPLE_RATE,
             feature_dim=80,
-            decoding_method="greedy_search",
+            decoding_method="modified_beam_search",
+            num_active_paths=4,
             enable_endpoint_detection=True,
             rule1_min_trailing_silence=2.4,
             rule2_min_trailing_silence=0.8,
