@@ -548,6 +548,7 @@
         let hasEnhancedTranscript = false;
         let isTranscriptEditing = false;
         let transcriptRawLines = [];
+        let transcriptTimestamps = [];
         let transcriptProofreadLines = [];
         let transcriptLineNodes = [];
         let transcriptRenderTimer = null;
@@ -1252,6 +1253,7 @@
                     transcriptRenderTimer = null;
                 }
                 transcriptRawLines = [];
+                transcriptTimestamps = [];
                 transcriptProofreadLines = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
@@ -1584,8 +1586,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                     continue;
                 }
                 if (!lineNode) {
-                    lineNode = document.createElement('p');
-                    lineNode.className = 'text-slate-900 text-sm mb-2';
+                    lineNode = document.createElement('div');
+                    lineNode.className = 'mb-4 pb-4 border-b border-slate-100 last:border-0';
                     lineNode.dataset.index = String(index);
                     const next = findNextLineNode(index);
                     if (next) {
@@ -1595,8 +1597,11 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                     }
                     transcriptLineNodes[index] = lineNode;
                 }
-                if (lineNode.textContent !== mergedLine) {
-                    lineNode.textContent = mergedLine;
+                const ts = transcriptTimestamps[index] || '';
+                const newHtml = (ts ? `<span class="text-[11px] text-slate-400 font-mono mr-2">${ts}</span>` : '') +
+                    `<span class="text-slate-900 text-sm leading-relaxed">${mergedLine}</span>`;
+                if (lineNode.innerHTML !== newHtml) {
+                    lineNode.innerHTML = newHtml;
                 }
             }
 
@@ -1629,6 +1634,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const parsedIndex = Number(index);
             const i = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : transcriptRawLines.length;
             transcriptRawLines[i] = cleaned;
+            if (timestamp) transcriptTimestamps[i] = timestamp;
             transcriptDirtyIndices.add(i);
             scheduleTranscriptRender();
         }
