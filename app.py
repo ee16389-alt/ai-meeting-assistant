@@ -116,26 +116,33 @@ import builtins
 builtins.print = _capturing_print
 
 
+def _make_stt_callback(session_sid: str, session_token: str):
+    """每場錄音產生獨立的 STT callback，閉包鎖定 sid 與 token，
+    避免舊 session 的 STT 結果污染新 session 的逐字稿。"""
+    def _callback(segments: list[dict]):
+        # 若 _recording_token 已換（新 session 開始），此 callback 已過期，直接丟棄
+        if _recording_token != session_token:
+            print(f"[CB] stale callback (token mismatch), dropping {len(segments)} seg(s)", flush=True)
+            return
+        print(f"[CB] _on_stt_segments called: {len(segments)} seg(s), sid={repr(session_sid)}", flush=True)
+        for seg in segments:
+            with _transcript_lock:
+                line = {
+                    "index": len(transcript_lines),
+                    "text": _apply_corrections(seg["text"]),
+                    "timestamp": time.strftime("%H:%M:%S"),
+                    "language": seg.get("language", ""),
+                    "token": session_token,
+                }
+                transcript_lines.append(line)
+            print(f"[CB] emit transcript_update: {repr(line['text'][:40])}", flush=True)
+            socketio.emit("transcript_update", line, room=session_sid)
+    return _callback
+
+
 def _on_stt_segments(segments: list[dict]):
-    """STT 背景 worker 完成推論後的回呼，透過 socketio 推送結果"""
-    sid = _active_sid
-    token = _recording_token
-    print(f"[CB] _on_stt_segments called: {len(segments)} seg(s), sid={repr(sid)}", flush=True)
-    if not sid:
-        print("[CB] no active sid, dropping", flush=True)
-        return
-    for seg in segments:
-        with _transcript_lock:
-            line = {
-                "index": len(transcript_lines),
-                "text": _apply_corrections(seg["text"]),
-                "timestamp": time.strftime("%H:%M:%S"),
-                "language": seg.get("language", ""),
-                "token": token,
-            }
-            transcript_lines.append(line)
-        print(f"[CB] emit transcript_update: {repr(line['text'][:40])}", flush=True)
-        socketio.emit("transcript_update", line, room=sid)
+    """相容舊介面，實際由 _make_stt_callback 產生的 closure 取代"""
+    pass
 
 
 def _on_stt_partial(text: str):
@@ -294,6 +301,9 @@ def handle_start(data=None):
     global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token
     _active_sid = request.sid
     _recording_token = uuid.uuid4().hex  # 每場錄音唯一 token
+    # 重新綁定 STT callback，讓 closure 鎖定本場 sid 與 token
+    if stt:
+        stt.set_result_callback(_make_stt_callback(_active_sid, _recording_token))
     with _transcript_lock:
         transcript_lines = []
         proofread_index = 0
