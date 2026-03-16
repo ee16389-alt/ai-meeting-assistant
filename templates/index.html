@@ -36,7 +36,7 @@
         .proofread-updated { border-left: 3px solid #22c55e; padding-left: 8px; transition: all 0.3s; }
         .tab-active { background: linear-gradient(135deg, #f36b21, #ff7f38); color: white; box-shadow: 0 10px 18px rgba(243, 107, 33, 0.28); }
         .tab-inactive { background-color: rgba(255, 255, 255, 0.82); color: #475569; border: 1px solid rgba(148,163,184,0.22); }
-        .partial-line { opacity: 0.7; border-left: 3px dashed #f59e0b; }
+        .partial-line { border-left: 3px solid #f59e0b; }
         .warmup-hint {
             display: inline-flex;
             align-items: center;
@@ -1659,7 +1659,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 container.appendChild(div);
             }
             div.innerHTML = `
-                <p class="text-slate-600 leading-relaxed text-sm">${escapeHtml(text)}</p>
+                <p class="text-slate-900 leading-relaxed text-sm">${escapeHtml(text)}</p>
             `;
             container.scrollTop = container.scrollHeight;
         }
