@@ -5,5 +5,8 @@ requests
 numpy
 pydub
 audioop-lts; python_version >= "3.13"
+# llama-cpp-python: use CPU-compatible wheel (no AVX2/AVX512 required)
+# If default install crashes with STATUS_ILLEGAL_INSTRUCTION (WinError 0xc000001d),
+# reinstall with: pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 llama-cpp-python
 opencc-python-reimplemented

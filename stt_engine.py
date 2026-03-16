@@ -250,6 +250,8 @@ class STTEngine:
             self._current_speaker = 1
             self._last_segment_end = 0.0
             self._time_offset_sec = 0.0
+            self._last_seen_text = ""
+            self._last_text_change_time = 0.0
             self._state = State.RECORDING
             return self._state.value
 
@@ -273,6 +275,12 @@ class STTEngine:
                 return
             self._state = State.IDLE
             stream = self._stream
+        # 先清空 queue，避免 worker 執行緒繼續用舊 stream
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+            except queue.Empty:
+                break
         # 送 tail padding 刷出最後一段
         self._flush_stream(stream)
 
@@ -394,14 +402,22 @@ class STTEngine:
 
     def _flush_stream(self, stream) -> None:
         """送入 tail padding，刷出最後未送出的辨識結果"""
-        tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
-        stream.accept_waveform(self.SAMPLE_RATE, tail)
-        while self._recognizer.is_ready(stream):
-            self._recognizer.decode(stream)
-        result = self._recognizer.get_result(stream)
-        text = (result.text if hasattr(result, "text") else str(result)).strip()
-        if text:
-            self._emit_text(text)
+        try:
+            tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
+            stream.accept_waveform(self.SAMPLE_RATE, tail)
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode_stream(stream)
+            result = self._recognizer.get_result(stream)
+            text = (result.text if hasattr(result, "text") else str(result)).strip()
+            if text:
+                self._emit_text(text)
+        except Exception as e:
+            print(f"[STT] _flush_stream 例外: {e}", flush=True)
+        finally:
+            try:
+                self._recognizer.reset(stream)
+            except Exception:
+                pass
 
     def _emit_text(self, text: str) -> None:
         text = _to_traditional(text)

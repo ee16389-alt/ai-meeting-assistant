@@ -2,18 +2,41 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 OUT_DIR = ROOT / "desktop" / "backend"
+
+# llama-cpp-python CPU-compatible wheel index (no AVX2/AVX512 required)
+LLAMA_CPP_CPU_INDEX = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
+
+
 def run(cmd):
     print(" ".join(cmd))
     subprocess.check_call(cmd, cwd=ROOT)
 
 
+def ensure_llama_cpp_cpu_compatible():
+    """在 Windows 上確保安裝 CPU 相容版 llama-cpp-python（不需要 AVX2/AVX512）"""
+    if os.name != "nt":
+        return
+    print("[build] Reinstalling llama-cpp-python with CPU-compatible wheel...")
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "llama-cpp-python",
+        "--extra-index-url", LLAMA_CPP_CPU_INDEX,
+        "--force-reinstall",
+        "--no-cache-dir",
+    ])
+    print("[build] llama-cpp-python CPU-compatible install done.")
+
+
 def main():
+    ensure_llama_cpp_cpu_compatible()
+
     if OUT_DIR.exists():
         shutil.rmtree(OUT_DIR)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
