@@ -687,7 +687,7 @@ def proofread_text(text: str) -> str:
         llm = _load_local_llm()
         if llm is None:
             return _call_ollama(system_prompt, text)
-        if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=3.0):
+        if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=30.0):
             return ""   # 模型繁忙，跳過此段校對
         try:
             resp = llm.create_chat_completion(

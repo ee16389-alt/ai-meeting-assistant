@@ -457,9 +457,7 @@ def handle_export(data):
 def handle_enhance_transcript():
     with _transcript_lock:
         lines_snapshot = list(enumerate(transcript_lines))
-    for index, line in lines_snapshot:
-        if not line.get("proofread"):
-            socketio.start_background_task(_proofread_line, index, line["text"])
+    socketio.start_background_task(_proofread_all_lines, lines_snapshot)
     socketio.emit("enhance_done")
 
 
@@ -478,6 +476,13 @@ def handle_export_summary(data):
 
 
 # ── 背景任務 ───────────────────────────────────────────
+
+def _proofread_all_lines(lines_snapshot: list):
+    """逐行序列校對，避免多個任務同時競搶 LLM 鎖而 timeout"""
+    for index, line in lines_snapshot:
+        if not line.get("proofread"):
+            _proofread_line(index, line["text"])
+
 
 def _proofread_line(index: int, original_text: str):
     """背景校對單行逐字稿"""
