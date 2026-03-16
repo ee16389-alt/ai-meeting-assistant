@@ -8,6 +8,7 @@ import queue
 import re
 import sys
 import threading
+import time
 from enum import Enum
 from pathlib import Path
 
@@ -171,6 +172,11 @@ class STTEngine:
 
         self._recognizer = self._create_recognizer()
         self._stream = self._recognizer.create_stream()
+
+        # 時間 fallback：偵測文字停止變化
+        self._last_seen_text = ""
+        self._last_text_change_time = 0.0
+        self._TEXT_STALE_TIMEOUT = 2.0  # 文字超過 2 秒沒變化 → 強制輸出
 
         # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
         self._audio_queue: queue.Queue = queue.Queue(maxsize=300)
@@ -347,11 +353,23 @@ class STTEngine:
         if text:
             print(f"[STT] partial={repr(text[:40])} endpoint={is_ep}", flush=True)
 
-        if is_ep:
-            print(f"[STT] endpoint detected, text={repr(text)}", flush=True)
+        # 時間 fallback：文字超過 2 秒沒變化就強制輸出
+        now = time.monotonic()
+        if text != self._last_seen_text:
+            self._last_seen_text = text
+            self._last_text_change_time = now
+        stale = (text and not is_ep
+                 and self._last_text_change_time > 0
+                 and (now - self._last_text_change_time) >= self._TEXT_STALE_TIMEOUT)
+
+        if is_ep or stale:
+            reason = "endpoint" if is_ep else "stale_timeout"
+            print(f"[STT] flush ({reason}), text={repr(text)}", flush=True)
             if text:
                 self._emit_text(text)
             self._recognizer.reset(stream)
+            self._last_seen_text = ""
+            self._last_text_change_time = 0.0
             with self._lock:
                 self._last_partial_text = ""
         else:
