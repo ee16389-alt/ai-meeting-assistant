@@ -701,16 +701,18 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
     else:
         summary_content = "尚無內容可供匯出"
 
+    mode_suffix = {"full": "全文摘要", "key_points": "重點條列", "all": "完整摘要"}.get(mode, mode)
     export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
-    summary_path = os.path.join(export_dir, "summary.txt")
+    summary_filename = f"summary_{mode_suffix}.txt"
+    summary_path = os.path.join(export_dir, summary_filename)
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write(summary_content)
 
     socketio.emit("export_ready", {
         "files": [
             {
-                "filename": f"{meeting_name}_summary.txt",
+                "filename": f"{meeting_name}_{mode_suffix}.txt",
                 "saved_path": summary_path,
             },
         ]
