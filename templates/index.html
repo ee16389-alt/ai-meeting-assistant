@@ -446,6 +446,9 @@
     <div id="unsaved-modal" class="hidden fixed inset-0 z-50 items-center justify-center px-4">
         <div class="absolute inset-0 bg-slate-900/40"></div>
         <div class="relative bg-white rounded-2xl border border-orange-200 shadow-xl p-6 w-full max-w-sm">
+            <button onclick="dismissUnsavedModal()" class="absolute top-3 right-3 text-slate-400 hover:text-slate-600 transition-colors">
+                <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
             <div class="flex items-center gap-2 mb-3">
                 <i data-lucide="alert-triangle" class="w-5 h-5 text-orange-500 flex-shrink-0"></i>
                 <div class="text-base font-semibold text-slate-900">尚未匯出上一場會議</div>
@@ -455,10 +458,7 @@
                 <button onclick="exportThenProceed()" class="w-full bg-orange-500 hover:bg-orange-400 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-all flex items-center justify-center gap-2">
                     <i data-lucide="download" class="w-4 h-4"></i>立即匯出，匯出後開始新會議
                 </button>
-                <div class="flex gap-2">
-                    <button onclick="confirmUnsavedProceed()" class="flex-1 bg-white hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 transition-all">略過，直接開始</button>
-                    <button onclick="dismissUnsavedModal()" class="flex-1 bg-white hover:bg-slate-50 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 transition-all">取消</button>
-                </div>
+                <button onclick="confirmUnsavedProceed()" class="w-full bg-white hover:bg-slate-50 text-slate-600 px-4 py-2 rounded-lg text-sm font-medium border border-slate-200 transition-all">略過，直接開始新會議</button>
             </div>
         </div>
     </div>
