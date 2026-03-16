@@ -439,6 +439,16 @@ def handle_export(data):
     socketio.start_background_task(_export_meeting, meeting_name, transcript_override, summary_overrides)
 
 
+@socketio.on("enhance_transcript")
+def handle_enhance_transcript():
+    with _transcript_lock:
+        lines_snapshot = list(enumerate(transcript_lines))
+    for index, line in lines_snapshot:
+        if not line.get("proofread"):
+            socketio.start_background_task(_proofread_line, index, line["text"])
+    socketio.emit("enhance_done")
+
+
 @socketio.on("export_summary")
 def handle_export_summary(data):
     meeting_name = data.get("meeting_name", "").strip()
