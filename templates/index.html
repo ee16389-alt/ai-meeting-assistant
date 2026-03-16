@@ -1892,7 +1892,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 renderAllSummariesFromCache();
                 return;
             }
-            beginSummaryRequest(3);
+            beginSummaryRequest(1);
             summaryCache = { full: null, key_points: null };
             renderAllSummarySkeleton();
             socket.emit('request_summary', { mode: 'all', transcript_override: transcriptOverride });
