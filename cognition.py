@@ -191,8 +191,10 @@ def _load_local_llm():
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
-            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(max(1, (os.cpu_count() or 4) - 1)))),
-            n_batch=512,
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(os.cpu_count() or 4))),
+            n_batch=int(os.environ.get("AMA_LLM_BATCH", "1024")),
+            use_mlock=True,
+            flash_attn=True,
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
