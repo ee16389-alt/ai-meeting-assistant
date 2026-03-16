@@ -7,6 +7,20 @@ import time
 
 import numpy as np
 
+try:
+    import opencc as _opencc
+    _s2twp = _opencc.OpenCC("s2twp")
+except Exception:
+    _s2twp = None
+
+def _to_traditional(text: str) -> str:
+    if _s2twp is None:
+        return text
+    try:
+        return _s2twp.convert(text)
+    except Exception:
+        return text
+
 
 def _configure_console_encoding() -> None:
     for stream_name in ("stdout", "stderr"):
@@ -501,7 +515,7 @@ def _generate_summary(mode: str, full_text: str):
     system_prompt = ""
     if mode == "full":
         system_prompt = (
-            "你是一位具備 10 年經驗的專業會議記錄與商業分析師。請根據提供的會議逐字稿，以繁體中文撰寫一份精鍊、高資訊密度的摘要。\n\n"
+            "你是一位具備 10 年經驗的專業會議記錄與商業分析師。請根據提供的會議逐字稿，以台灣繁體中文撰寫一份精鍊、高資訊密度的摘要。全程必須使用繁體中文，嚴禁出現簡體字。\n\n"
             "【輸出規範】\n"
             "會議背景：用一句話說明會議的主要目的或核心討論內容。\n"
             "關鍵內容：化繁為簡，歸納討論過程中的邏輯重點。\n"
@@ -514,7 +528,7 @@ def _generate_summary(mode: str, full_text: str):
         )
     elif mode == "key_points":
         system_prompt = (
-            "你是一位專業的專案經理。請將會議逐字稿內容轉化為行動導向的條列重點。\n\n"
+            "你是一位專業的專案經理。請將會議逐字稿內容轉化為行動導向的條列重點。全程必須使用台灣繁體中文，嚴禁出現簡體字。\n\n"
             "【格式要求】\n"
             "以「•」開頭，產出 3-7 個具體重點。\n"
             "每個重點採用「[分類] 描述」的格式。分類標籤參考：[決議]、[進度]、[問題]、[待辦]。\n"
@@ -529,7 +543,7 @@ def _generate_summary(mode: str, full_text: str):
         )
     elif mode == "all":
         system_prompt = (
-            "你是一位具備 10 年經驗的專業會議記錄與商業分析師暨專案經理。請根據會議逐字稿，以繁體中文輸出以下兩部分：\n\n"
+            "你是一位具備 10 年經驗的專業會議記錄與商業分析師暨專案經理。請根據會議逐字稿，以台灣繁體中文輸出以下兩部分。全程必須使用繁體中文，嚴禁出現簡體字。\n\n"
             "【全文摘要】\n"
             "會議背景：用一句話說明主要目的或核心討論內容。\n"
             "關鍵內容：化繁為簡，歸納邏輯重點。\n"
@@ -553,8 +567,9 @@ def _generate_summary(mode: str, full_text: str):
     for chunk in _call_model_stream(system_prompt, full_text):
         accumulated += chunk
         socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
-    
-    # 最終傳送完整結果以供快取
+
+    # 最終傳送完整結果（轉繁體中文後供快取）
+    accumulated = _to_traditional(accumulated)
     socketio.emit("summary_result", {"mode": mode, "content": accumulated})
 
 
