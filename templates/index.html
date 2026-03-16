@@ -294,6 +294,28 @@
                             <button id="enhance-undo-btn" onclick="undoEnhance()" class="hidden flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-slate-200">
                                 <i data-lucide="rotate-ccw" class="w-4 h-4 text-slate-600"></i> <span data-i18n="undo_enhance">復原</span>
                             </button>
+                            <button onclick="openCorrectionsModal()" class="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-slate-200">
+                                <i data-lucide="book-open" class="w-4 h-4 text-slate-600"></i> 詞彙設定
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 詞彙設定 Modal -->
+                    <div id="corrections-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center" style="z-index:999;">
+                        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 p-6">
+                            <div class="flex items-center justify-between mb-4">
+                                <h3 class="text-lg font-bold text-slate-900">自訂詞彙修正</h3>
+                                <button onclick="closeCorrectionsModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+                            </div>
+                            <p class="text-sm text-slate-500 mb-4">STT 辨識完成後，自動將「來源詞」替換為「正確詞」，適合修正專有名詞辨識錯誤。</p>
+                            <div class="flex gap-2 mb-4">
+                                <input id="correction-from" type="text" placeholder="辨識錯誤詞" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
+                                <span class="flex items-center text-slate-400">→</span>
+                                <input id="correction-to" type="text" placeholder="正確詞" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
+                                <button onclick="addCorrection()" class="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm font-medium">新增</button>
+                            </div>
+                            <div id="corrections-table" class="space-y-2 max-h-60 overflow-y-auto"></div>
+                            <p id="corrections-error" class="hidden text-sm text-red-500 mt-2"></p>
                         </div>
                     </div>
                     <div class="summary-toolbar"></div>
@@ -2289,6 +2311,62 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         });
 
         applyI18n();
+
+        // ── 詞彙修正設定 ────────────────────────────────
+        socket.on('corrections_list', (data) => {
+            const list = data.corrections || [];
+            const table = document.getElementById('corrections-table');
+            if (!table) return;
+            if (list.length === 0) {
+                table.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">尚無自訂詞彙</p>';
+                return;
+            }
+            table.innerHTML = list.map(c => `
+                <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2">
+                    <span class="flex-1 text-sm text-slate-700">${c.from}</span>
+                    <span class="text-slate-400 text-sm">→</span>
+                    <span class="flex-1 text-sm font-medium text-slate-900">${c.to}</span>
+                    <button onclick="deleteCorrection('${c.from.replace(/'/g, "\\'")}')" class="text-slate-400 hover:text-red-500 ml-1">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            `).join('');
+            lucide.createIcons();
+        });
+
+        socket.on('corrections_error', (data) => {
+            const el = document.getElementById('corrections-error');
+            if (el) { el.textContent = data.message; el.classList.remove('hidden'); }
+        });
+
+        function openCorrectionsModal() {
+            document.getElementById('corrections-modal').classList.remove('hidden');
+            const err = document.getElementById('corrections-error');
+            if (err) err.classList.add('hidden');
+            socket.emit('get_corrections');
+        }
+
+        function closeCorrectionsModal() {
+            document.getElementById('corrections-modal').classList.add('hidden');
+        }
+
+        function addCorrection() {
+            const from = document.getElementById('correction-from').value.trim();
+            const to = document.getElementById('correction-to').value.trim();
+            const err = document.getElementById('corrections-error');
+            if (err) err.classList.add('hidden');
+            if (!from || !to) {
+                if (err) { err.textContent = '來源詞與正確詞不可為空'; err.classList.remove('hidden'); }
+                return;
+            }
+            socket.emit('add_correction', { from, to });
+            document.getElementById('correction-from').value = '';
+            document.getElementById('correction-to').value = '';
+        }
+
+        function deleteCorrection(from) {
+            socket.emit('delete_correction', { from });
+        }
     </script>
 </body>
 </html>

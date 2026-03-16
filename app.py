@@ -1,6 +1,8 @@
 """Flask + SocketIO 主伺服器 - 路由與事件處理"""
 
+import json
 import os
+import re
 import sys
 import threading
 import time
@@ -126,7 +128,7 @@ def _on_stt_segments(segments: list[dict]):
         with _transcript_lock:
             line = {
                 "index": len(transcript_lines),
-                "text": seg["text"],
+                "text": _apply_corrections(seg["text"]),
                 "timestamp": time.strftime("%H:%M:%S"),
                 "language": seg.get("language", ""),
                 "token": token,
@@ -172,6 +174,31 @@ _recording_token: str = ""  # 每次錄音生成的唯一 token，前端用來�
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
+
+
+def _corrections_path() -> str:
+    return os.path.join(_export_root_dir(), "user_corrections.json")
+
+
+def _load_corrections() -> list[dict]:
+    try:
+        with open(_corrections_path(), encoding="utf-8") as f:
+            data = json.load(f)
+            return [c for c in data if c.get("from") and c.get("to")]
+    except Exception:
+        return []
+
+
+def _save_corrections(corrections: list[dict]) -> None:
+    os.makedirs(_export_root_dir(), exist_ok=True)
+    with open(_corrections_path(), "w", encoding="utf-8") as f:
+        json.dump(corrections, f, ensure_ascii=False, indent=2)
+
+
+def _apply_corrections(text: str) -> str:
+    for c in _load_corrections():
+        text = re.sub(re.escape(c["from"]), c["to"], text)
+    return text
 
 
 def _export_root_dir() -> str:
@@ -392,6 +419,35 @@ def handle_resume():
     state = stt.resume()
     emit("state_changed", {"state": state})
     return {"ok": True, "state": state}
+
+
+@socketio.on("get_corrections")
+def handle_get_corrections():
+    emit("corrections_list", {"corrections": _load_corrections()})
+
+
+@socketio.on("add_correction")
+def handle_add_correction(data):
+    from_word = (data.get("from") or "").strip()
+    to_word = (data.get("to") or "").strip()
+    if not from_word or not to_word:
+        emit("corrections_error", {"message": "來源詞與替換詞不可為空"})
+        return
+    corrections = _load_corrections()
+    if any(c["from"] == from_word for c in corrections):
+        emit("corrections_error", {"message": f"「{from_word}」已存在"})
+        return
+    corrections.append({"from": from_word, "to": to_word})
+    _save_corrections(corrections)
+    emit("corrections_list", {"corrections": corrections})
+
+
+@socketio.on("delete_correction")
+def handle_delete_correction(data):
+    from_word = (data.get("from") or "").strip()
+    corrections = [c for c in _load_corrections() if c["from"] != from_word]
+    _save_corrections(corrections)
+    emit("corrections_list", {"corrections": corrections})
 
 
 @socketio.on("stop_recording")
