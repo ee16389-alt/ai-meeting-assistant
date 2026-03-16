@@ -377,15 +377,16 @@ class STTEngine:
 
         if is_ep or stale:
             reason = "endpoint" if is_ep else "stale_timeout"
-            # 補短暫 padding 把 encoder buffer 最後幾幀刷出來，
-            # 避免最後 2-5 字停在 encoder queue 裡被 reset 丟棄
-            tail = np.zeros(int(0.3 * self.SAMPLE_RATE), dtype=np.float32)
+            # Paraformer-bilingual chunk_size = 320ms，加 0.8s padding（> 2 chunks）
+            # 確保 encoder buffer 最後幾幀完整刷出，is_ready 一定能觸發
+            tail = np.zeros(int(0.8 * self.SAMPLE_RATE), dtype=np.float32)
             stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
             final_result = self._recognizer.get_result(stream)
             final_text = (final_result.text if hasattr(final_result, "text") else str(final_result)).strip()
-            emit_text = final_text or text
+            # 取較長的版本，避免 padding 後反而縮短
+            emit_text = final_text if len(final_text) >= len(text) else text
             print(f"[STT] flush ({reason}), text={repr(emit_text)}", flush=True)
             if emit_text:
                 self._emit_text(emit_text)
