@@ -203,49 +203,11 @@ def _load_local_llm():
         return None
 
 
-def _call_ollama_stream(system_prompt: str, user_prompt: str):
-    """串流呼叫 Ollama，每次 yield 一個 token 字串"""
-    payload = {
-        "model": MODEL,
-        "prompt": user_prompt,
-        "system": system_prompt,
-        "stream": True,
-        "options": {"temperature": TEMPERATURE},
-    }
-    try:
-        with requests.post(OLLAMA_URL, json=payload, timeout=120, stream=True) as resp:
-            if resp.status_code == 404:
-                # Ollama 不支援 /api/generate，改用 /api/chat 非串流
-                result = _call_ollama_chat(system_prompt, user_prompt)
-                yield result
-                return
-            resp.raise_for_status()
-            for line in resp.iter_lines():
-                if not line:
-                    continue
-                try:
-                    data = json.loads(line)
-                except Exception:
-                    continue
-                token = data.get("response", "")
-                if token:
-                    yield token
-                if data.get("done", False):
-                    break
-    except requests.exceptions.ConnectionError:
-        yield "[錯誤] 無法連線至 Ollama，請確認 ollama serve 已啟動"
-    except requests.exceptions.Timeout:
-        yield "[錯誤] Ollama 回應逾時"
-    except Exception as e:
-        yield f"[錯誤] Ollama 串流呼叫失敗: {e}"
-
-
 def _call_model_stream(system_prompt: str, user_prompt: str):
-    """串流輸出模式，讓前端能即時看到字。GGUF 優先，失敗時 fallback 至 Ollama。"""
+    """串流輸出模式，讓前端能即時看到字。"""
     llm = _load_local_llm()
     if llm is None:
-        # GGUF 不可用，嘗試 Ollama
-        yield from _call_ollama_stream(system_prompt, user_prompt)
+        yield f"[錯誤] {_LOCAL_LLM_LOAD_ERROR or '本地模型未就緒'}"
         return
 
     with _LOCAL_LLM_LOCK:
