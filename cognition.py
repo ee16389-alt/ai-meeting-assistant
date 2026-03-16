@@ -685,33 +685,31 @@ def proofread_text(text: str) -> str:
         "只輸出修正後的結果，不要加任何說明、標題或前綴。"
         + COMMON_OUTPUT_GUARDRAILS
     )
-    # 非阻塞模式：若 LLM 鎖忙碌超過 3 秒則放棄此次校對，避免與摘要任務互搶
-    if _local_model_available():
-        llm = _load_local_llm()
-        if llm is None:
-            return _call_ollama(system_prompt, text)
-        if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=30.0):
-            return ""   # 模型繁忙，跳過此段校對
-        try:
-            resp = llm.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                temperature=TEMPERATURE,
-                max_tokens=min(len(text) * 2 + 64, 256),
-            )
-            return (
-                resp.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-                .strip()
-            )
-        except Exception:
-            return ""
-        finally:
-            _LOCAL_LLM_LOCK.release()
-    return _call_ollama(system_prompt, text)
+    # 非阻塞模式：若 LLM 鎖忙碌超過 30 秒則放棄此次校對，避免與摘要任務互搶
+    llm = _load_local_llm()
+    if llm is None:
+        return ""   # GGUF 不可用，跳過
+    if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=30.0):
+        return ""   # 模型繁忙，跳過此段校對
+    try:
+        resp = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=TEMPERATURE,
+            max_tokens=min(len(text) * 2 + 64, 256),
+        )
+        return (
+            resp.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+            .strip()
+        )
+    except Exception:
+        return ""
+    finally:
+        _LOCAL_LLM_LOCK.release()
 
 
 def summarize_full(text: str) -> str:
