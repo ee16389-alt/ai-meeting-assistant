@@ -577,9 +577,16 @@ def _generate_summary(mode: str, full_text: str):
     socketio.emit("summary_start", {"mode": mode})
 
     from cognition import _call_model_stream
+    grounded_prompt = (
+        "【重要】以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源。"
+        "你的摘要中出現的所有人名、日期、金額、地點、事件，都必須直接來自以下文字，絕對不可自行編造或引用外部知識。\n\n"
+        "--- 逐字稿開始 ---\n"
+        + full_text
+        + "\n--- 逐字稿結束 ---"
+    )
     accumulated = ""
     try:
-        for chunk in _call_model_stream(system_prompt, full_text):
+        for chunk in _call_model_stream(system_prompt, grounded_prompt):
             accumulated += chunk
             socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
     except Exception as e:

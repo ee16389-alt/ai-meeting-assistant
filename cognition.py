@@ -218,6 +218,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TEMPERATURE,
+                repeat_penalty=1.3,
                 max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stream=True,
             )
@@ -239,6 +240,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
             stream = llm.create_completion(
                 prompt=prompt,
                 temperature=TEMPERATURE,
+                repeat_penalty=1.3,
                 max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stop=["User:", "\nSystem:"],
                 stream=True,
