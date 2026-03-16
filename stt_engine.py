@@ -335,7 +335,7 @@ class STTEngine:
         stream.accept_waveform(self.SAMPLE_RATE, samples)
         ready_count = 0
         while self._recognizer.is_ready(stream):
-            self._recognizer.decode(stream)
+            self._recognizer.decode_stream(stream)
             ready_count += 1
         if ready_count == 0:
             print("[STT] is_ready=False, no decode this chunk", flush=True)
