@@ -480,9 +480,14 @@ def handle_stop():
 @socketio.on("request_summary")
 def handle_summary(data):
     mode = data.get("mode", "full")
-    full_text = "\n".join(
-        line.get("proofread", line["text"]) for line in transcript_lines
-    )
+    # 優先使用前端傳來的逐字稿（含使用者編輯後內容），fallback 到後端快取
+    transcript_override = (data.get("transcript_override") or "").strip()
+    if transcript_override:
+        full_text = transcript_override
+    else:
+        full_text = "\n".join(
+            line.get("proofread", line["text"]) for line in transcript_lines
+        )
 
     if not full_text.strip():
         emit("error", {"message": "尚無逐字稿內容可供摘要"})

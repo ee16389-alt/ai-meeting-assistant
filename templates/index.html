@@ -542,6 +542,7 @@
         let isCountdown = false;
         let countdownTimer = null;
         let isRecording = false;
+        let isPaused = false; // 使用者主動暫停時為 true，區分重連競態與正常暫停
         let sttModelKey = null;
         let currentLang = 'zh';
         let currentLangMode = 'auto';
@@ -856,6 +857,7 @@
         socket.on('disconnect', () => {
             setConnectionStatus('disconnected');
             recordingSessionReady = false;
+            isPaused = false; // 重連後讓 guard 能正確攔截殘留的 paused 狀態
         });
 
         socket.on('connect_error', () => {
@@ -865,8 +867,9 @@
 
         socket.on('state_changed', (data) => {
             // 若後端認為仍在錄音，但前端已停止（重連競態條件），自動同步停止
-            // isBusy=true 時表示正在 startRecordingNow() 流程中，state_changed 先於 ack 到達，不能攔截
-            if ((data.state === 'recording' || data.state === 'paused') && !isRecording && !isBusy) {
+            // isBusy=true：startRecordingNow() 進行中，state_changed 先於 ack 到達，不能攔截
+            // isPaused=true：使用者主動暫停，backend 回 paused 屬正常，不能攔截
+            if ((data.state === 'recording' || data.state === 'paused') && !isRecording && !isBusy && !isPaused) {
                 socket.emit('stop_recording', {}, () => null);
                 return;
             }
@@ -1018,7 +1021,12 @@
             // 若是由「立即匯出後開始新會議」觸發，匯出完成後自動開始倒數
             if (_pendingStartAfterExport) {
                 _pendingStartAfterExport = false;
-                _doStartCountdown();
+                const newName = document.getElementById('meeting-name').value.trim();
+                if (!newName) {
+                    showToast('匯出完成！請輸入新會議名稱後再開始。');
+                } else {
+                    _doStartCountdown();
+                }
             }
         });
 
@@ -1038,6 +1046,7 @@
                 summaryRequestInFlight = 0;
                 setTranscriptOpsLocked(false);
             }
+            _pendingStartAfterExport = false; // 匯出失敗時取消自動開始
             updateAckDiag(false, data.message || '未知錯誤');
             alert(data.message);
         });
@@ -1201,6 +1210,7 @@
         async function startRecordingNow() {
             if (isBusy) return;
             isBusy = true;
+            isPaused = false;
 
             const meetingInput = document.getElementById('meeting-name');
             const meetingName = meetingInput.value.trim();
@@ -1318,6 +1328,7 @@
                 await audioContext.suspend();
             }
             isRecording = false;
+            isPaused = true;
             recordingSessionReady = false;
             currentState = 'paused';
             updateUI();
@@ -1328,6 +1339,7 @@
             if (audioContext && audioContext.state === 'suspended') {
                 await audioContext.resume();
             }
+            isPaused = false;
             recordingSessionReady = true;
             isRecording = true;
             currentState = 'recording';
@@ -1340,6 +1352,7 @@
                 const meetingInput = document.getElementById('meeting-name');
                 const previousMeetingName = meetingInput.value.trim();
                 isRecording = false;
+                isPaused = false;
                 recordingSessionReady = false;
                 currentState = 'stopped';
                 updateUI();
