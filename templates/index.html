@@ -322,10 +322,13 @@
                         </div>
                         <span class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100 hidden">Qwen 2.5</span>
                     </div>
-                    <div class="flex gap-2 flex-wrap summary-toolbar">
+                    <div class="flex gap-2 flex-wrap summary-toolbar items-center">
                         <button onclick="requestSummary('full')" class="summary-tab tab-active text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="full" data-i18n="summary_full">全文摘要</button>
                         <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points" data-i18n="summary_key">重點條列</button>
                         <button onclick="requestAllSummaries()" class="text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500" data-i18n="summary_all">全部摘要</button>
+                        <button onclick="regenerateSummary()" id="regenerate-btn" class="hidden flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg font-medium transition-all bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新生成
+                        </button>
                     </div>
                 </div>
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
@@ -1179,6 +1182,7 @@
                 summaryCache = { full: null, key_points: null };
                 summaryCacheSourceText = '';
                 summaryViewMode = 'single';
+                _showRegenerateBtn(false);
                 clearSummaryLocksForNewRecording();
                 // 重置摘要區域
                 document.getElementById('summary-container').innerHTML = `
@@ -1799,20 +1803,20 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             return merged.join('\n').trim();
         }
 
-        function requestSummary(mode) {
+        function requestSummary(mode, forceRegenerate = false) {
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_summary'));
                 return;
             }
             summaryViewMode = 'single';
-            resetSummaryCacheForTranscript(transcriptText);
             activeSingleSummaryMode = mode;
             applySummaryTabState(mode);
-            if (summaryCache[mode]) {
+            if (summaryCache[mode] && !forceRegenerate) {
                 showSummary(mode, summaryCache[mode]);
                 return;
             }
+            summaryCache[mode] = null;
             if (summaryRequestInFlight > 0) {
                 const loadingTitle = summaryTitle(mode);
                 document.getElementById('summary-container').innerHTML = `
@@ -1878,7 +1882,20 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (summaryCache.key_points) showSummary('key_points', summaryCache.key_points);
         }
 
-        function requestAllSummaries() {
+        function regenerateSummary() {
+            if (summaryViewMode === 'all') {
+                requestAllSummaries(true);
+            } else {
+                requestSummary(activeSingleSummaryMode || 'full', true);
+            }
+        }
+
+        function _showRegenerateBtn(visible) {
+            const btn = document.getElementById('regenerate-btn');
+            if (btn) btn.classList.toggle('hidden', !visible);
+        }
+
+        function requestAllSummaries(forceRegenerate = false) {
             if (summaryRequestInFlight > 0) return;
             const transcriptOverride = getTranscriptForSummary();
             if (!transcriptOverride) {
@@ -1886,9 +1903,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 return;
             }
             summaryViewMode = 'all';
-            resetSummaryCacheForTranscript(transcriptOverride);
             activeSingleSummaryMode = null;
-            if (summaryCache.full && summaryCache.key_points) {
+            if (summaryCache.full && summaryCache.key_points && !forceRegenerate) {
                 renderAllSummariesFromCache();
                 return;
             }
@@ -1900,6 +1916,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         function showSummary(mode, content) {
             summaryCache[mode] = content;
+            _showRegenerateBtn(true);
 
             // 若正在「全部摘要」模式，更新對應區塊
             const allContainer = document.getElementById('summary-all');
