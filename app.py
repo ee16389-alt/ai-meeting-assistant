@@ -397,10 +397,11 @@ def handle_stop():
     handle_audio_recording_done()
     # 原子操作：立即設為 IDLE 並取走剩餘 buffer，UI 立即響應
     remaining = stt.request_stop()
-    socketio.emit("transcript_partial_clear")
-    socketio.emit("state_changed", {"state": "idle"})
+    stop_sid = _active_sid
+    socketio.emit("transcript_partial_clear", room=stop_sid)
+    socketio.emit("state_changed", {"state": "idle"}, room=stop_sid)
     # 非同步處理剩餘音頻，不阻塞回應
-    socketio.start_background_task(_finish_transcription, remaining)
+    socketio.start_background_task(_finish_transcription, remaining, stop_sid)
     return {"ok": True, "state": "idle"}
 
 
@@ -455,10 +456,11 @@ def handle_export(data):
 
 @socketio.on("enhance_transcript")
 def handle_enhance_transcript():
+    sid = request.sid
     with _transcript_lock:
         lines_snapshot = list(enumerate(transcript_lines))
-    socketio.start_background_task(_proofread_all_lines, lines_snapshot)
-    socketio.emit("enhance_done")
+    socketio.start_background_task(_proofread_all_lines, lines_snapshot, sid)
+    socketio.emit("enhance_done", room=sid)
 
 
 @socketio.on("export_summary")
@@ -477,14 +479,14 @@ def handle_export_summary(data):
 
 # ── 背景任務 ───────────────────────────────────────────
 
-def _proofread_all_lines(lines_snapshot: list):
+def _proofread_all_lines(lines_snapshot: list, sid: str):
     """逐行序列校對，避免多個任務同時競搶 LLM 鎖而 timeout"""
     for index, line in lines_snapshot:
         if not line.get("proofread"):
-            _proofread_line(index, line["text"])
+            _proofread_line(index, line["text"], sid)
 
 
-def _proofread_line(index: int, original_text: str):
+def _proofread_line(index: int, original_text: str, sid: str):
     """背景校對單行逐字稿"""
     proofread = proofread_text(original_text)
     if proofread and not proofread.startswith("[錯誤]"):
@@ -495,10 +497,10 @@ def _proofread_line(index: int, original_text: str):
             "index": index,
             "original": original_text,
             "proofread": proofread,
-        })
+        }, room=sid)
 
 
-def _finish_transcription(remaining: np.ndarray):
+def _finish_transcription(remaining: np.ndarray, sid: str):
     """背景完成停止後剩餘音頻的轉寫"""
     if remaining is None or remaining.size == 0:
         return
@@ -512,7 +514,7 @@ def _finish_transcription(remaining: np.ndarray):
                 "language": seg.get("language", ""),
             }
             transcript_lines.append(line)
-        socketio.emit("transcript_update", line)
+        socketio.emit("transcript_update", line, room=sid)
 
 
 def _generate_summary(mode: str, full_text: str):
@@ -528,7 +530,7 @@ def _generate_summary(mode: str, full_text: str):
             "過濾雜訊：忽略寒暄、閒聊及與業務決策無關的重複性對話。\n\n"
             "【嚴格規則】\n"
             "僅限使用逐字稿內容，嚴禁推測與補充。\n"
-            "若內容破碎無法理解，請直接回覆「資訊不足，無法產出有效摘要」。\n"
+            "即使內容片段，仍須盡力整理並輸出可用的摘要。\n"
             "保持客觀中立，不使用誇飾語句。"
         )
     elif mode == "key_points":
@@ -544,7 +546,7 @@ def _generate_summary(mode: str, full_text: str):
             "【嚴格規則】\n"
             "禁止撰寫「會議討論了行銷方案」這種空泛的語句。\n"
             "應改寫為「行銷團隊確定採用方案 B，預算控制在 10 萬以內」。\n"
-            "若無具體細節，則回覆「資訊不足」。"
+            "即使細節有限，仍須盡力輸出具體條列內容。"
         )
     elif mode == "all":
         system_prompt = (
@@ -560,7 +562,7 @@ def _generate_summary(mode: str, full_text: str):
             "每點必須含具體細節（負責人、期限、數據）。\n\n"
             "【嚴格規則】\n"
             "僅限使用逐字稿內容，嚴禁推測與補充。\n"
-            "若內容不足，直接回覆「資訊不足」。\n"
+            "即使內容片段，仍須盡力整理並輸出可用的摘要與條列。\n"
             "保持客觀中立，不使用誇飾語句。"
         )
 

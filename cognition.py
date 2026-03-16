@@ -188,11 +188,10 @@ def _load_local_llm():
         return None
 
     try:
-        # 優化：調整執行緒為物理核心數，並增加 n_batch 加快讀取速度
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
-            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(max(1, (os.cpu_count() or 4) // 2)))),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(max(1, (os.cpu_count() or 4) - 1)))),
             n_batch=512,
             verbose=False,
         )
@@ -700,7 +699,7 @@ def proofread_text(text: str) -> str:
                 {"role": "user", "content": text},
             ],
             temperature=TEMPERATURE,
-            max_tokens=min(len(text) * 3 + 128, 1024),
+            max_tokens=min(len(text) * 2, 512),
         )
         return (
             resp.get("choices", [{}])[0]

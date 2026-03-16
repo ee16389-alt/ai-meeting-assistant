@@ -591,6 +591,7 @@
                 alert_switch_model_blocked: '錄音中無法切換模型，請先停止再切換。',
                 alert_switch_language_blocked: '錄音中無法切換語言，請先停止再切換。',
                 alert_edit_blocked: '錄音中無法編輯逐字稿，請先停止。',
+                alert_summary_blocked_recording: '錄音中無法產生摘要，請先停止錄音。',
                 session_idle_hint: '準備開始新的會議。請輸入會議名稱後按「開始會議」。',
                 session_recording_hint: '目前正在錄音，可按「暫停」或「停止」。',
                 session_paused_hint: '錄音已暫停，可按「繼續」或「停止」。',
@@ -667,6 +668,7 @@
                 alert_switch_model_blocked: 'Cannot change model while recording. Stop first.',
                 alert_switch_language_blocked: 'Cannot change language while recording. Stop first.',
                 alert_edit_blocked: 'Editing is disabled while recording. Stop first.',
+                alert_summary_blocked_recording: 'Cannot generate summary while recording. Stop first.',
                 session_idle_hint: 'Ready for a new meeting. Enter a meeting name and click Start.',
                 session_recording_hint: 'Recording in progress. You can pause or stop.',
                 session_paused_hint: 'Recording is paused. You can resume or stop.',
@@ -1406,6 +1408,18 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 saveAudioCheckbox.classList.toggle('cursor-not-allowed', locked);
             }
             const transcriptBusy = currentState !== 'idle';
+            const summaryBlocked = currentState === 'recording' || currentState === 'paused';
+            document.querySelectorAll('.summary-tab').forEach((el) => {
+                el.disabled = summaryBlocked;
+                el.classList.toggle('opacity-50', summaryBlocked);
+                el.classList.toggle('cursor-not-allowed', summaryBlocked);
+            });
+            const allSummaryBtn = document.querySelector('[data-i18n="summary_all"]');
+            if (allSummaryBtn) {
+                allSummaryBtn.disabled = summaryBlocked;
+                allSummaryBtn.classList.toggle('opacity-50', summaryBlocked);
+                allSummaryBtn.classList.toggle('cursor-not-allowed', summaryBlocked);
+            }
             [editBtn, editDoneBtn, enhanceBtn, enhanceUndoBtn].forEach((el) => {
                 if (!el || el.classList.contains('hidden')) return;
                 const locked = transcriptBusy || transcriptOpsLockedBySummary;
@@ -1804,6 +1818,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         }
 
         function requestSummary(mode, forceRegenerate = false) {
+            if (currentState === 'recording' || currentState === 'paused') {
+                showToast(t('alert_summary_blocked_recording'));
+                return;
+            }
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_summary'));
@@ -1896,6 +1914,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         }
 
         function requestAllSummaries(forceRegenerate = false) {
+            if (currentState === 'recording' || currentState === 'paused') {
+                showToast(t('alert_summary_blocked_recording'));
+                return;
+            }
             if (summaryRequestInFlight > 0) return;
             const transcriptOverride = getTranscriptForSummary();
             if (!transcriptOverride) {
