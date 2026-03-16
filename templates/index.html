@@ -860,7 +860,8 @@
 
         socket.on('state_changed', (data) => {
             // 若後端認為仍在錄音，但前端已停止（重連競態條件），自動同步停止
-            if ((data.state === 'recording' || data.state === 'paused') && !isRecording) {
+            // isBusy=true 時表示正在 startRecordingNow() 流程中，state_changed 先於 ack 到達，不能攔截
+            if ((data.state === 'recording' || data.state === 'paused') && !isRecording && !isBusy) {
                 socket.emit('stop_recording', {}, () => null);
                 return;
             }
