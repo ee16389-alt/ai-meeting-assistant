@@ -685,6 +685,7 @@ def proofread_text(text: str) -> str:
         "【輸出限制】\n"
         "僅輸出修正後的結果。\n"
         "嚴禁加入任何說明、標題、前綴或「好的，這是修正後的內容」等引言。"
+        + COMMON_OUTPUT_GUARDRAILS
     )
     # 非阻塞模式：若 LLM 鎖忙碌超過 30 秒則放棄此次校對，避免與摘要任務互搶
     llm = _load_local_llm()
