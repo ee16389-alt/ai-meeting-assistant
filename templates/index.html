@@ -1154,7 +1154,8 @@
         function exportThenProceed() {
             dismissUnsavedModal();
             _pendingStartAfterExport = true;
-            exportMeeting();
+            // 強制用上一場的會議名稱匯出，避免輸入框已填入新名稱而跑錯資料夾
+            exportMeeting(lastCompletedMeetingName || undefined);
         }
 
         function confirmUnsavedProceed() {
@@ -2127,12 +2128,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             return Boolean(summaryCache[mode]);
         }
 
-        function exportMeeting() {
+        function exportMeeting(forceName) {
             if (summaryRequestInFlight > 0) {
                 showToast('摘要產生中，請稍候完成後再匯出。');
                 return;
             }
-            const meetingName = document.getElementById('meeting-name').value.trim();
+            const meetingName = forceName || document.getElementById('meeting-name').value.trim();
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_export'));
