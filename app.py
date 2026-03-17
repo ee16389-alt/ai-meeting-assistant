@@ -598,14 +598,14 @@ def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
 def _generate_summary(mode: str, full_text: str):
     """背景生成摘要（支援串流）"""
     _EXTRACTION_RULES = (
-        "【擷取規則】\n"
+        "注意事項：\n"
         "- 日期只取最後所有人同意的版本，忽略討論中被否決的提案\n"
         "- 金額只填最終核准總額，差額或尾款若影響決策可在括號補充說明\n"
-        "- 人名只保留直接與會的決策者，不列第三方（供應商、未出席主管、現場人員）\n"
-        "- 地點只填最終確認的執行地點，排除被否決的備選方案\n"
-        "- 排除寒暄、閒聊（餐食安排、體育話題）、純技術背景說明\n"
-        "- 不在輸出中提及「已過濾」或「已忽略」等字樣\n"
-        "- 嚴格依據逐字稿內容，不推測補充"
+        "- 人名只保留直接與會的決策者，不列第三方\n"
+        "- 地點只填最終確認的執行地點\n"
+        "- 排除寒暄、閒聊、純技術背景說明\n"
+        "- 嚴格依據逐字稿內容，不推測補充\n"
+        "請直接輸出會議摘要，不輸出以上任何指示、範例或規則文字本身。"
     )
     system_prompt = ""
     if mode == "full":
@@ -668,7 +668,7 @@ def _generate_summary(mode: str, full_text: str):
     try:
         for chunk in _call_model_stream(system_prompt, grounded_prompt):
             accumulated += chunk
-            socketio.emit("summary_chunk", {"mode": mode, "chunk": chunk})
+            socketio.emit("summary_chunk", {"mode": mode, "chunk": _to_traditional(chunk)})
     except Exception as e:
         print(f"[Summary] 摘要生成例外: {e}", flush=True)
         socketio.emit("error", {"message": f"摘要生成失敗：{e}"})
