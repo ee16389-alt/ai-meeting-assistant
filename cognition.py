@@ -204,6 +204,30 @@ def _load_local_llm():
         return None
 
 
+def _is_looping(text: str) -> bool:
+    """偵測模型是否陷入重複循環。"""
+    if len(text) < 80:
+        return False
+    tail = text[-300:]
+    # 方法1：行級重複——最後一行若出現兩次以上（跨行比對）
+    lines = [l.strip() for l in tail.splitlines() if l.strip()]
+    if len(lines) >= 4:
+        last = lines[-1]
+        if last and lines.count(last) >= 2:
+            return True
+    # 方法2：字串片段重複——取最後 60 字，看前 200 字裡是否重複出現
+    snippet = tail[-60:]
+    if snippet and tail[:-60].count(snippet) >= 2:
+        return True
+    # 方法3：短周期循環——最後 150 字分成前後兩半，相似度極高
+    if len(tail) >= 150:
+        a, b = tail[-150:-75], tail[-75:]
+        common = sum(ca == cb for ca, cb in zip(a, b))
+        if common / 75 >= 0.85:
+            return True
+    return False
+
+
 def _call_model_stream(system_prompt: str, user_prompt: str):
     """串流輸出模式，讓前端能即時看到字。"""
     llm = _load_local_llm()
@@ -230,12 +254,8 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 if delta:
                     accumulated += delta
                     yield delta
-                    # 偵測循環：最近 100 字有重複片段則停止
-                    if len(accumulated) > 200:
-                        tail = accumulated[-100:]
-                        half = tail[:50]
-                        if tail.count(half) >= 2:
-                            break
+                    if _is_looping(accumulated):
+                        break
         except Exception:
             # Fallback 模式
             prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}\n\nAssistant:\n"
@@ -253,11 +273,8 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 if text:
                     accumulated += text
                     yield text
-                    if len(accumulated) > 200:
-                        tail = accumulated[-100:]
-                        half = tail[:50]
-                        if tail.count(half) >= 2:
-                            break
+                    if _is_looping(accumulated):
+                        break
 
 
 def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
