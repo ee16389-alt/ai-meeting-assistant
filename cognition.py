@@ -190,7 +190,7 @@ def _load_local_llm():
     try:
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
-            n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
+            n_ctx=int(os.environ.get("AMA_LLM_CTX", "8192")),
             n_threads=int(os.environ.get("AMA_LLM_THREADS", str(os.cpu_count() or 4))),
             n_batch=int(os.environ.get("AMA_LLM_BATCH", "1024")),
             use_mlock=True,
@@ -245,7 +245,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 ],
                 temperature=TEMPERATURE,
                 repeat_penalty=1.3,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
                 stream=True,
             )
             accumulated = ""
@@ -263,7 +263,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 prompt=prompt,
                 temperature=TEMPERATURE,
                 repeat_penalty=1.3,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
                 stop=["User:", "\nSystem:"],
                 stream=True,
             )
@@ -290,7 +290,7 @@ def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TEMPERATURE,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
             )
             return (
                 resp.get("choices", [{}])[0]
@@ -308,7 +308,7 @@ def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
             resp = llm.create_completion(
                 prompt=prompt,
                 temperature=TEMPERATURE,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
                 stop=["User:", "\nSystem:"],
             )
             return (

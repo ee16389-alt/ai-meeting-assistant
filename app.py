@@ -595,6 +595,31 @@ def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
         socketio.emit("transcript_update", line, room=sid)
 
 
+# n_ctx=8192，扣除 system prompt(~300) + 輸出(768)，可用 input ≈ 7100 tokens ≈ 4700 中文字
+_MAX_CHARS_SINGLE_PASS = 4500
+
+
+def _compress_long_transcript(full_text: str) -> str:
+    """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。"""
+    from cognition import _call_model_stream
+    chunk_size = 4000
+    chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
+    total = len(chunks)
+    mini_parts = []
+    for idx, chunk in enumerate(chunks, 1):
+        socketio.emit("summary_chunk", {
+            "mode": "_progress",
+            "chunk": f"正在處理第 {idx}/{total} 段逐字稿...\n"
+        })
+        sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 3-5 句重點，只輸出摘要文字，不輸出其他說明。"
+        user_p = f"【第 {idx}/{total} 段】\n{chunk}"
+        mini = ""
+        for tok in _call_model_stream(sys_p, user_p):
+            mini += tok
+        mini_parts.append(f"第{idx}段重點：{mini.strip()}")
+    return "\n\n".join(mini_parts)
+
+
 def _generate_summary(mode: str, full_text: str):
     """背景生成摘要（支援串流）"""
     _EXTRACTION_RULES = (
@@ -651,12 +676,24 @@ def _generate_summary(mode: str, full_text: str):
     socketio.emit("summary_start", {"mode": mode})
 
     from cognition import _call_model_stream
+
+    # 逐字稿過長時先分段壓縮，再送入最終摘要
+    if len(full_text) > _MAX_CHARS_SINGLE_PASS:
+        socketio.emit("summary_chunk", {
+            "mode": mode,
+            "chunk": f"逐字稿共約 {len(full_text)} 字，將分段處理後再彙整摘要...\n\n"
+        })
+        full_text = _compress_long_transcript(full_text)
+        source_label = "以下是各段逐字稿的重點摘要，請根據這些重點產出最終摘要"
+    else:
+        source_label = "以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源"
+
     grounded_prompt = (
-        "【重要】以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源。"
+        f"【重要】{source_label}。"
         "你的摘要中出現的所有人名、日期、金額、地點、事件，都必須直接來自以下文字，絕對不可自行編造或引用外部知識。\n\n"
-        "--- 逐字稿開始 ---\n"
+        "--- 內容開始 ---\n"
         + full_text
-        + "\n--- 逐字稿結束 ---"
+        + "\n--- 內容結束 ---"
     )
     accumulated = ""
     try:
