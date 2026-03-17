@@ -937,6 +937,8 @@
         });
 
         socket.on('summary_chunk', (data) => {
+            // 忽略非當前 session 發來的殘留事件（防止後台舊任務污染畫面）
+            if (summaryRequestInFlight <= 0) return;
             let target;
             if (summaryViewMode === 'all') {
                 target = document.getElementById(`summary-stream-${data.mode}`);
@@ -2144,12 +2146,14 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         function exportMeeting(forceName) {
             if (summaryRequestInFlight > 0) {
                 showToast('摘要產生中，請稍候完成後再匯出。');
+                _pendingStartAfterExport = false;
                 return;
             }
             const meetingName = forceName || document.getElementById('meeting-name').value.trim();
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_export'));
+                _pendingStartAfterExport = false;
                 return;
             }
             showToast('正在匯出，請稍候...');
