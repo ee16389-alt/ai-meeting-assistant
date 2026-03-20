@@ -84,8 +84,11 @@ class _UnavailableSTT:
     def resume(self) -> str:
         return "error"
 
-    def request_stop(self) -> np.ndarray:
-        return np.array([], dtype=np.float32)
+    def request_stop(self) -> None:
+        return None
+
+    def take_pending_flush_stream(self):
+        return None
 
     def stop(self) -> tuple[str, list[dict]]:
         return "error", []
@@ -415,14 +418,14 @@ def handle_stop():
         emit("state_changed", {"state": "error"})
         return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
     handle_audio_recording_done()
-    # 原子操作：立即設為 IDLE 並取走剩餘 buffer，UI 立即響應
-    remaining = stt.request_stop()
+    # request_stop：快速（drain queue + 設 IDLE），flush 交給 background task
+    stt.request_stop()
     stop_sid = _active_sid
     stop_token = _recording_token
     socketio.emit("transcript_partial_clear", room=stop_sid)
     socketio.emit("state_changed", {"state": "idle"}, room=stop_sid)
-    # 非同步處理剩餘音頻，不阻塞回應
-    socketio.start_background_task(_finish_transcription, remaining, stop_sid, stop_token)
+    # 非同步 flush 剩餘音頻，不阻塞 ack 回傳
+    socketio.start_background_task(_finish_transcription, stop_sid, stop_token)
     return {"ok": True, "state": "idle"}
 
 
@@ -501,33 +504,42 @@ def handle_export_summary(data):
 # ── 背景任務 ───────────────────────────────────────────
 
 
-def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
-    """背景完成停止後剩餘音頻的轉寫"""
-    t0 = time.time()
-    print(f"[Stop] _finish_transcription 開始，remaining size={getattr(remaining, 'size', None)}", flush=True)
+_FINISH_TRANSCRIPTION_TIMEOUT = 30.0  # 最長等待 flush 完成的秒數
 
-    if remaining is None or remaining.size == 0:
-        print(f"[Stop] 無剩餘 buffer，直接結束 ({time.time()-t0:.2f}s)", flush=True)
+
+def _finish_transcription(sid: str, token: str):
+    """背景完成停止後的 STT flush（帶 30 秒超時保護）"""
+    t0 = time.time()
+    print(f"[Stop] _finish_transcription 開始", flush=True)
+
+    # 取走等待 flush 的 stream（由 request_stop 存放）
+    flush_stream = stt.take_pending_flush_stream()
+    if flush_stream is None:
+        print(f"[Stop] 無待 flush stream，直接結束 ({time.time()-t0:.2f}s)", flush=True)
         return
 
+    print(f"[Stop] 開始 flush_stream（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
     t1 = time.time()
-    print(f"[Stop] 開始 transcribe_audio ({time.time()-t0:.2f}s)", flush=True)
-    final_segments = stt.transcribe_audio(remaining)
-    print(f"[Stop] transcribe_audio 完成，segments={len(final_segments)} ({time.time()-t1:.2f}s)", flush=True)
+    flush_done = threading.Event()
 
-    t2 = time.time()
-    for seg in final_segments:
-        with _transcript_lock:
-            line = {
-                "index": len(transcript_lines),
-                "text": seg["text"],
-                "timestamp": time.strftime("%H:%M:%S"),
-                "language": seg.get("language", ""),
-                "token": token,
-            }
-            transcript_lines.append(line)
-        socketio.emit("transcript_update", line, room=sid)
-    print(f"[Stop] emit 完成，總耗時 {time.time()-t0:.2f}s", flush=True)
+    def _do_flush():
+        try:
+            stt._flush_stream(flush_stream)
+        except Exception as e:
+            print(f"[Stop] flush_stream 例外: {e}", flush=True)
+        finally:
+            flush_done.set()
+
+    flush_thread = threading.Thread(target=_do_flush, daemon=True, name="stt-flush")
+    flush_thread.start()
+
+    completed = flush_done.wait(timeout=_FINISH_TRANSCRIPTION_TIMEOUT)
+    if not completed:
+        print(f"[Stop] flush_stream 超時（>{_FINISH_TRANSCRIPTION_TIMEOUT}s），強制放棄", flush=True)
+    else:
+        print(f"[Stop] flush_stream 完成 ({time.time()-t1:.2f}s)", flush=True)
+
+    print(f"[Stop] _finish_transcription 總耗時 {time.time()-t0:.2f}s", flush=True)
 
 
 # n_ctx=4096，扣除 system prompt(~300) + 輸出(512)，可用 input ≈ 3284 tokens ≈ 2100 中文字

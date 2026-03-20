@@ -1436,6 +1436,11 @@
                 updateSessionStage();
                 showToast(t('toast_session_finished'));
             } catch (err) {
+                // 確保例外不會讓按鈕永久卡在「處理中」
+                isRecording = false;
+                isPaused = false;
+                currentState = 'idle';
+                updateUI();
                 updateAckDiag(false, err.message || String(err));
                 showToast(err.message || String(err));
             }

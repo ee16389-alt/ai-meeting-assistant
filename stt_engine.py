@@ -163,6 +163,7 @@ class STTEngine:
 
         self._lock = threading.Lock()
         self._state = State.IDLE
+        self._pending_flush_stream = None  # 停止後等待 background flush 的 stream
         self._last_partial_text = ""
         self._last_confirmed_text = ""
         self._last_audio_rms = 0.0
@@ -279,14 +280,21 @@ class STTEngine:
                 return
             self._state = State.IDLE
             stream = self._stream
+            self._pending_flush_stream = stream  # 交給 background task 執行 flush
         # 先清空 queue，避免 worker 執行緒繼續用舊 stream
         while not self._audio_queue.empty():
             try:
                 self._audio_queue.get_nowait()
             except queue.Empty:
                 break
-        # 送 tail padding 刷出最後一段
-        self._flush_stream(stream)
+        # _flush_stream 移到 background task，此處不再阻塞 event handler
+
+    def take_pending_flush_stream(self):
+        """取走等待 flush 的 stream（每次 stop 後呼叫一次）。回傳 stream 或 None。"""
+        with self._lock:
+            s = self._pending_flush_stream
+            self._pending_flush_stream = None
+            return s
 
     def stop(self) -> tuple[str, list[dict]]:
         self.request_stop()
