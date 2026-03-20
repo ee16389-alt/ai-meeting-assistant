@@ -3,5 +3,8 @@ flask-socketio
 sherpa-onnx
 requests
 numpy
+# llama-cpp-python：Windows 請改用下方指令安裝（避免 WinError 0xc000001d）
+# Windows: set CMAKE_ARGS=-DLLAMA_AVX2=on -DLLAMA_AVX512=off && pip install llama-cpp-python --force-reinstall
+# macOS/Linux: pip install llama-cpp-python
 llama-cpp-python
 opencc-python-reimplemented
