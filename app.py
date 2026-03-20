@@ -586,14 +586,14 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
             }, room=sid)
         t_chunk = time.time()
         print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
-        sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 3-5 句重點，只輸出摘要文字，不輸出其他說明。"
+        sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 1-2 句最核心重點，越精簡越好，只輸出摘要文字，不輸出其他說明。"
         user_p = f"【第 {idx}/{total} 段】\n{chunk}"
         mini_result = [""]
         chunk_done = threading.Event()
 
         def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done):
             try:
-                for tok in _call_model_stream(sys_p, user_p):
+                for tok in _call_model_stream(sys_p, user_p, max_tokens=128):
                     result[0] += tok
             except Exception as e:
                 print(f"[Summary] map-reduce 第 {idx}/{total} 段例外: {e}", flush=True)
