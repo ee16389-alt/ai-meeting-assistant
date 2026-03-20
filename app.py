@@ -449,6 +449,14 @@ def handle_summary(data):
     socketio.start_background_task(_generate_summary, mode, full_text, sid)
 
 
+@socketio.on("cancel_summary")
+def handle_cancel_summary():
+    global _summary_cancelled
+    with _summary_cancelled_lock:
+        _summary_cancelled = True
+    print("[Summary] 收到取消請求，設定取消旗標", flush=True)
+
+
 @socketio.on("get_storage_path")
 def handle_get_storage_path(data=None):
     meeting_name = ""
@@ -506,6 +514,15 @@ def handle_export_summary(data):
 
 _FINISH_TRANSCRIPTION_TIMEOUT = 30.0  # 最長等待 flush 完成的秒數
 
+# 摘要取消旗標（每次新任務開始前重設）
+_summary_cancelled = False
+_summary_cancelled_lock = threading.Lock()
+
+
+def _is_summary_cancelled() -> bool:
+    with _summary_cancelled_lock:
+        return _summary_cancelled
+
 
 def _finish_transcription(sid: str, token: str):
     """背景完成停止後的 STT flush（帶 30 秒超時保護）"""
@@ -555,20 +572,41 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
     chunk_size = 2000
     chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
     total = len(chunks)
+    _CHUNK_TIMEOUT = 60.0
     mini_parts = []
     for idx, chunk in enumerate(chunks, 1):
+        if _is_summary_cancelled():
+            print(f"[Summary] map-reduce 已取消（第 {idx}/{total} 段前）", flush=True)
+            return "\n\n".join(mini_parts) or full_text
         if sid:
-            socketio.emit("summary_token", {
-                "mode": "_progress",
-                "token": f"正在處理第 {idx}/{total} 段逐字稿...\n"
+            socketio.emit("summary_progress", {
+                "current": idx,
+                "total": total,
+                "stage": "compress",
             }, room=sid)
         t_chunk = time.time()
         print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
         sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 3-5 句重點，只輸出摘要文字，不輸出其他說明。"
         user_p = f"【第 {idx}/{total} 段】\n{chunk}"
-        mini = ""
-        for tok in _call_model_stream(sys_p, user_p):
-            mini += tok
+        mini_result = [""]
+        chunk_done = threading.Event()
+
+        def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done):
+            try:
+                for tok in _call_model_stream(sys_p, user_p):
+                    result[0] += tok
+            except Exception as e:
+                print(f"[Summary] map-reduce 第 {idx}/{total} 段例外: {e}", flush=True)
+            finally:
+                done.set()
+
+        threading.Thread(target=_do_chunk, daemon=True).start()
+        completed = chunk_done.wait(timeout=_CHUNK_TIMEOUT)
+        if not completed:
+            print(f"[Summary] 第 {idx}/{total} 段壓縮超時（>{_CHUNK_TIMEOUT}s），已跳過", flush=True)
+            mini_parts.append(f"第{idx}段重點：（超時略過）")
+            continue
+        mini = mini_result[0]
         print(f"[Summary] map-reduce 第 {idx}/{total} 段完成，耗時 {time.time()-t_chunk:.1f}s，輸出 {len(mini)} 字", flush=True)
         mini_parts.append(f"第{idx}段重點：{mini.strip()}")
     return "\n\n".join(mini_parts)
@@ -576,6 +614,9 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
 
 def _generate_summary(mode: str, full_text: str, sid: str):
     """背景生成摘要（支援串流）"""
+    global _summary_cancelled
+    with _summary_cancelled_lock:
+        _summary_cancelled = False
     _STT_CORRECTION_HINT = (
         "【語音辨識容錯】逐字稿可能含有語音辨識錯誤（同音異字、錯別字、專有名詞辨識錯誤），"
         "請在理解內容時自動修正這些錯誤，但不需要特別說明修正了什麼，直接輸出正確內容即可。\n\n"
@@ -668,9 +709,21 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             "token": f"逐字稿共約 {char_count} 字，將分段處理後再彙整摘要...\n\n"
         }, room=sid)
         full_text = _compress_long_transcript(full_text, sid=sid)
+        if _is_summary_cancelled():
+            socketio.emit("summary_error", {"mode": mode, "message": "摘要已取消"}, room=sid)
+            return
         source_label = "以下是各段逐字稿的重點摘要，請根據這些重點產出最終摘要"
     else:
         source_label = "以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源"
+
+    # 最終推理開始前 emit progress
+    if sid:
+        final_chunk_count = chunk_count if use_map_reduce else 1
+        socketio.emit("summary_progress", {
+            "current": final_chunk_count,
+            "total": final_chunk_count,
+            "stage": "final",
+        }, room=sid)
 
     grounded_prompt = (
         f"【重要】{source_label}。"
@@ -679,22 +732,60 @@ def _generate_summary(mode: str, full_text: str, sid: str):
         + full_text
         + "\n--- 內容結束 ---"
     )
+    _FINAL_TIMEOUT = 120.0
     accumulated = ""
     last_token_time = time.time()
     t_final = time.time()
     print(f"[Summary] 最終推理開始，mode={mode}", flush=True)
-    try:
-        for chunk in _call_model_stream(system_prompt, grounded_prompt, max_tokens=final_max_tokens):
+
+    final_result = {"tokens": [], "error": None}
+    final_done = threading.Event()
+
+    def _do_final():
+        try:
+            for chunk in _call_model_stream(system_prompt, grounded_prompt, max_tokens=final_max_tokens):
+                final_result["tokens"].append(chunk)
+        except Exception as e:
+            final_result["error"] = str(e)
+        finally:
+            final_done.set()
+
+    threading.Thread(target=_do_final, daemon=True, name="summary-final").start()
+
+    # 在等待期間持續取 token 並串流給前端（輪詢間隔 0.05s）
+    while not final_done.is_set():
+        elapsed = time.time() - t_final
+        if elapsed >= _FINAL_TIMEOUT:
+            print(f"[Summary] 最終推理超時（>{_FINAL_TIMEOUT}s），中止", flush=True)
+            socketio.emit("summary_error", {"mode": mode, "message": "摘要生成超時，請縮短逐字稿後重試"}, room=sid)
+            return
+        if _is_summary_cancelled():
+            print(f"[Summary] 最終推理已取消", flush=True)
+            socketio.emit("summary_error", {"mode": mode, "message": "摘要已取消"}, room=sid)
+            return
+        # 取出已累積的 tokens 並串流
+        while final_result["tokens"]:
+            chunk = final_result["tokens"].pop(0)
             now = time.time()
-            # 心跳：若超過 10 秒未有新 token，emit keep_alive 防止連線因閒置被切斷
             if now - last_token_time >= 10:
                 socketio.emit("keep_alive", {"mode": mode}, room=sid)
                 print(f"[Summary] keep_alive sent (gap: {now - last_token_time:.1f}s)", flush=True)
             accumulated += chunk
             socketio.emit("summary_token", {"mode": mode, "token": _to_traditional(chunk)}, room=sid)
             last_token_time = now
-    except Exception as e:
-        print(f"[Summary] 摘要生成例外: {e}", flush=True)
+        final_done.wait(timeout=0.05)
+
+    # 執行緒結束後清空剩餘 token buffer
+    for chunk in final_result["tokens"]:
+        now = time.time()
+        if now - last_token_time >= 10:
+            socketio.emit("keep_alive", {"mode": mode}, room=sid)
+        accumulated += chunk
+        socketio.emit("summary_token", {"mode": mode, "token": _to_traditional(chunk)}, room=sid)
+        last_token_time = now
+
+    if final_result["error"]:
+        print(f"[Summary] 摘要生成例外: {final_result['error']}", flush=True)
         socketio.emit("summary_error", {"mode": mode, "message": "摘要產生中斷，請重試"}, room=sid)
         return  # 例外路徑不送 summary_done，由前端 summary_error handler 解鎖
 
