@@ -984,6 +984,8 @@
         });
 
         socket.on('summary_done', (data) => {
+            // 先記錄焦點，DOM 操作後還原，避免 remove()/innerHTML 導致焦點跳轉
+            const _prevFocus = document.activeElement;
             endSummaryRequest();
             // 清掉串流暫存區
             const streamDiv = document.getElementById(`summary-stream-${data.mode}`);
@@ -1004,6 +1006,9 @@
                 summaryCache.key_points = key;
                 showSummary('full', summaryCache.full);
                 if (key) showSummary('key_points', key);
+                if (_prevFocus && document.activeElement !== _prevFocus && document.contains(_prevFocus)) {
+                    _prevFocus.focus({ preventScroll: true });
+                }
                 return;
             }
 
@@ -1012,6 +1017,10 @@
                 return;
             }
             showSummary(data.mode, data.content);
+            // 還原焦點：若 DOM 操作導致焦點跳走，且原焦點仍在 DOM 中，回到原位
+            if (_prevFocus && document.activeElement !== _prevFocus && document.contains(_prevFocus)) {
+                _prevFocus.focus({ preventScroll: true });
+            }
         });
 
         // 心跳：後端 LLM 推論超過 10 秒未出 token 時發送，重置前端計時器防止誤判逾時
