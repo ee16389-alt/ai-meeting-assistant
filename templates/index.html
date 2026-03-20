@@ -287,7 +287,9 @@
                             <button id="edit-done-btn" onclick="finishEditTranscript()" class="hidden flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all">
                                 <i data-lucide="check" class="w-4 h-4"></i> <span data-i18n="edit_done">完成</span>
                             </button>
-
+                            <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                                <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span>編輯全文</span>
+                            </button>
                         </div>
                     </div>
                     <div class="summary-toolbar"></div>
@@ -301,6 +303,20 @@
                         <span class="warmup-dot"></span>
                         <span data-i18n="warmup_hint">模型預熱中，第一行稍等…</span>
                     </div>
+                </div>
+                <!-- 全文編輯器：取代 transcript-container 顯示 -->
+                <div id="fulltext-editor" class="hidden flex-1 flex-col panel-body">
+                    <div class="flex items-center justify-between px-4 py-2 border-b border-orange-200 bg-orange-50 flex-shrink-0">
+                        <span class="text-xs text-orange-600 font-mono">格式：HH:MM:SS 內容（可直接刪除或修改任意行）</span>
+                        <div class="flex gap-2">
+                            <button onclick="cancelFullTextEdit()" class="px-3 py-1 text-sm rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-all">取消</button>
+                            <button onclick="saveFullTextEdit()" class="px-3 py-1 text-sm rounded-lg bg-orange-500 hover:bg-orange-400 text-white font-medium transition-all">儲存</button>
+                        </div>
+                    </div>
+                    <textarea id="fulltext-textarea"
+                        class="flex-1 resize-none p-4 font-mono text-sm text-slate-800 bg-white outline-none leading-relaxed"
+                        placeholder="尚無逐字稿內容"
+                        spellcheck="false"></textarea>
                 </div>
                 </div>
             </section>
@@ -1607,7 +1623,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 allSummaryBtn.classList.toggle('opacity-50', summaryBlocked);
                 allSummaryBtn.classList.toggle('cursor-not-allowed', summaryBlocked);
             }
-            [editBtn, editDoneBtn, enhanceBtn, enhanceUndoBtn].forEach((el) => {
+            const fulltextEditBtn = document.getElementById('fulltext-edit-btn');
+            [editBtn, editDoneBtn, fulltextEditBtn].forEach((el) => {
                 if (!el || el.classList.contains('hidden')) return;
                 const locked = transcriptBusy || transcriptOpsLockedBySummary;
                 el.disabled = locked;
@@ -1742,7 +1759,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         function setTranscriptOpsLocked(locked) {
             transcriptOpsLockedBySummary = Boolean(locked);
-            ['edit-transcript-btn', 'edit-done-btn'].forEach((id) => {
+            ['edit-transcript-btn', 'edit-done-btn', 'fulltext-edit-btn'].forEach((id) => {
                 const btn = document.getElementById(id);
                 if (!btn || btn.classList.contains('hidden')) return;
                 btn.disabled = transcriptOpsLockedBySummary;
@@ -1841,6 +1858,76 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             renderTranscriptFromLines();
         }
 
+
+        // ── 全文編輯模式 ───────────────────────────────────
+
+        function openFullTextEditor() {
+            if (guardTranscriptOpsLocked()) return;
+            if (currentState !== 'idle') {
+                showToast(t('alert_edit_blocked'));
+                return;
+            }
+            if (!transcriptRawLines.length) {
+                showToast(t('empty_transcript'));
+                return;
+            }
+            // 建立編輯內容：每行 "HH:MM:SS 內容" 或僅 "內容"
+            const lines = transcriptRawLines.map((text, i) => {
+                const ts = transcriptTimestamps[i] || '';
+                return ts ? `${ts} ${text}` : text;
+            });
+            const ta = document.getElementById('fulltext-textarea');
+            ta.value = lines.join('\n');
+            // 切換顯示
+            document.getElementById('transcript-container').classList.add('hidden');
+            document.getElementById('fulltext-editor').classList.remove('hidden');
+            document.getElementById('fulltext-editor').classList.add('flex');
+            document.getElementById('fulltext-edit-btn').classList.add('hidden');
+            ta.focus();
+        }
+
+        function saveFullTextEdit() {
+            const ta = document.getElementById('fulltext-textarea');
+            const TS_LINE = /^(\d{2}:\d{2}:\d{2})\s+([\s\S]+)$/;
+            const rawLines = ta.value.split('\n');
+            const newLines = [];
+            const newTimestamps = [];
+            for (const raw of rawLines) {
+                const trimmed = raw.trim();
+                if (!trimmed) continue;
+                const m = trimmed.match(TS_LINE);
+                if (m) {
+                    newTimestamps.push(m[1]);
+                    newLines.push(normalizeTranscriptLine(m[2]));
+                } else {
+                    newTimestamps.push('');
+                    newLines.push(normalizeTranscriptLine(trimmed));
+                }
+            }
+            transcriptRawLines = newLines;
+            transcriptTimestamps = newTimestamps;
+            transcriptLineNodes = [];
+            transcriptDirtyIndices = new Set();
+            for (let i = 0; i < newLines.length; i++) transcriptDirtyIndices.add(i);
+            // 清除摘要快取，讓使用者重新生成
+            const newText = getTranscriptForSummary();
+            resetSummaryCacheForTranscript(newText + '__edited__');
+            _closeFullTextEditor();
+            renderTranscriptFromLines();
+            showToast('逐字稿已更新');
+        }
+
+        function cancelFullTextEdit() {
+            _closeFullTextEditor();
+        }
+
+        function _closeFullTextEditor() {
+            document.getElementById('fulltext-editor').classList.add('hidden');
+            document.getElementById('fulltext-editor').classList.remove('flex');
+            document.getElementById('transcript-container').classList.remove('hidden');
+            document.getElementById('fulltext-edit-btn').classList.remove('hidden');
+            lucide.createIcons();
+        }
 
         function showPartialLine(timestamp, text) {
             const container = document.getElementById('transcript-container');
