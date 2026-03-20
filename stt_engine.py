@@ -105,7 +105,7 @@ def _find_sherpa_model_dir() -> Path | None:
     cfg = _load_model_pack_config()
     model_dir_name = str(cfg.get(
         "sherpaModelDirName",
-        "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+        "sherpa-onnx-streaming-paraformer-zh-2023-09-14"
     )).strip()
 
     candidates: list[Path] = []
@@ -197,7 +197,7 @@ class STTEngine:
         if not local_dir:
             raise RuntimeError(
                 "找不到 Sherpa-ONNX 模型目錄，請確認模型已安裝\n"
-                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-bilingual-zh-en）"
+                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-zh-2023-09-14）"
             )
 
         encoder = str(local_dir / "encoder.int8.onnx")
