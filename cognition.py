@@ -256,17 +256,21 @@ def _is_looping(text: str) -> bool:
 _LLM_STREAM_TIMEOUT = 120  # 單次串流最長允許時間（秒）
 
 
-def _call_model_stream(system_prompt: str, user_prompt: str):
+def _call_model_stream(system_prompt: str, user_prompt: str, max_tokens: int | None = None):
     """串流輸出模式，讓前端能即時看到字。
 
     Lock 策略：只在建立 stream 物件時持鎖，建立完成後立即釋放，
     讓 yield chunk 的過程在 lock 外執行，避免長時間佔用 LLM 資源。
     超過 _LLM_STREAM_TIMEOUT 秒後拋出 TimeoutError。
+
+    max_tokens：若為 None 則沿用環境變數 AMA_LLM_MAX_TOKENS（預設 512）。
     """
     llm = _load_local_llm()
     if llm is None:
         yield f"[錯誤] {_LOCAL_LLM_LOAD_ERROR or '本地模型未就緒'}"
         return
+
+    _max_tokens = max_tokens if max_tokens is not None else int(os.environ.get("AMA_LLM_MAX_TOKENS", "512"))
 
     # ── 建立 stream：持鎖期間只呼叫 create_*，不 yield ──
     stream = None
@@ -280,7 +284,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 ],
                 temperature=TEMPERATURE,
                 repeat_penalty=1.1,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=_max_tokens,
                 stream=True,
             )
         except Exception:
@@ -291,7 +295,7 @@ def _call_model_stream(system_prompt: str, user_prompt: str):
                 prompt=prompt,
                 temperature=TEMPERATURE,
                 repeat_penalty=1.1,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+                max_tokens=_max_tokens,
                 stop=["User:", "\nSystem:"],
                 stream=True,
             )

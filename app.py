@@ -547,7 +547,7 @@ def _finish_transcription(sid: str, token: str):
 _MAX_CHARS_SINGLE_PASS = 2000
 
 
-def _compress_long_transcript(full_text: str) -> str:
+def _compress_long_transcript(full_text: str, sid: str = "") -> str:
     """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。
     chunk_size 設為 2000 字，對應 n_ctx=4096 的 80% 以內（含 system prompt 開銷後仍安全）。
     """
@@ -557,15 +557,19 @@ def _compress_long_transcript(full_text: str) -> str:
     total = len(chunks)
     mini_parts = []
     for idx, chunk in enumerate(chunks, 1):
-        socketio.emit("summary_token", {
-            "mode": "_progress",
-            "token": f"正在處理第 {idx}/{total} 段逐字稿...\n"
-        })
+        if sid:
+            socketio.emit("summary_token", {
+                "mode": "_progress",
+                "token": f"正在處理第 {idx}/{total} 段逐字稿...\n"
+            }, room=sid)
+        t_chunk = time.time()
+        print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
         sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 3-5 句重點，只輸出摘要文字，不輸出其他說明。"
         user_p = f"【第 {idx}/{total} 段】\n{chunk}"
         mini = ""
         for tok in _call_model_stream(sys_p, user_p):
             mini += tok
+        print(f"[Summary] map-reduce 第 {idx}/{total} 段完成，耗時 {time.time()-t_chunk:.1f}s，輸出 {len(mini)} 字", flush=True)
         mini_parts.append(f"第{idx}段重點：{mini.strip()}")
     return "\n\n".join(mini_parts)
 
@@ -629,18 +633,41 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             f"{_EXTRACTION_RULES}"
         )
 
+    # ── 診斷 log ──────────────────────────────────────────
+    char_count = len(full_text)
+    use_map_reduce = char_count > _MAX_CHARS_SINGLE_PASS
+    chunk_size = 2000
+    chunk_count = (char_count + chunk_size - 1) // chunk_size if use_map_reduce else 1
+    print(
+        f"[Summary] mode={mode} | 逐字稿={char_count} 字 | "
+        f"map-reduce={'是，共 ' + str(chunk_count) + ' 段' if use_map_reduce else '否'}",
+        flush=True,
+    )
+
+    # ── 動態 max_tokens（full 模式依逐字稿長度調整）──────
+    if mode == "full":
+        if char_count <= 500:
+            final_max_tokens = 128
+        elif char_count <= 1500:
+            final_max_tokens = 256
+        else:
+            final_max_tokens = 384
+        print(f"[Summary] full mode max_tokens={final_max_tokens}（逐字稿 {char_count} 字）", flush=True)
+    else:
+        final_max_tokens = None  # 其他 mode 沿用 AMA_LLM_MAX_TOKENS 預設值
+
     # 告訴前端準備開始串流
     socketio.emit("summary_start", {"mode": mode}, room=sid)
 
     from cognition import _call_model_stream
 
     # 逐字稿過長時先分段壓縮，再送入最終摘要
-    if len(full_text) > _MAX_CHARS_SINGLE_PASS:
+    if use_map_reduce:
         socketio.emit("summary_token", {
             "mode": mode,
-            "token": f"逐字稿共約 {len(full_text)} 字，將分段處理後再彙整摘要...\n\n"
+            "token": f"逐字稿共約 {char_count} 字，將分段處理後再彙整摘要...\n\n"
         }, room=sid)
-        full_text = _compress_long_transcript(full_text)
+        full_text = _compress_long_transcript(full_text, sid=sid)
         source_label = "以下是各段逐字稿的重點摘要，請根據這些重點產出最終摘要"
     else:
         source_label = "以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源"
@@ -654,8 +681,10 @@ def _generate_summary(mode: str, full_text: str, sid: str):
     )
     accumulated = ""
     last_token_time = time.time()
+    t_final = time.time()
+    print(f"[Summary] 最終推理開始，mode={mode}", flush=True)
     try:
-        for chunk in _call_model_stream(system_prompt, grounded_prompt):
+        for chunk in _call_model_stream(system_prompt, grounded_prompt, max_tokens=final_max_tokens):
             now = time.time()
             # 心跳：若超過 10 秒未有新 token，emit keep_alive 防止連線因閒置被切斷
             if now - last_token_time >= 10:
@@ -671,6 +700,7 @@ def _generate_summary(mode: str, full_text: str, sid: str):
 
     # 僅成功路徑送出 summary_done
     accumulated = _to_traditional(accumulated)
+    print(f"[Summary] 最終推理完成，耗時 {time.time()-t_final:.1f}s，輸出 {len(accumulated)} 字", flush=True)
     socketio.emit("summary_done", {"mode": mode, "content": accumulated}, room=sid)
 
 
