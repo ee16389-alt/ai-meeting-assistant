@@ -334,11 +334,11 @@
                             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新生成
                         </button>
                     </div>
-                    <!-- 摘要進度列 + 取消按鈕（生成中才顯示） -->
-                    <div id="summary-progress-row" class="mt-2" style="display:none; align-items:center; gap:8px;">
-                        <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
-                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
-                    </div>
+                </div>
+                <!-- 摘要進度列 + 取消按鈕：位於 header 與內容區之間，生成中才顯示 -->
+                <div id="summary-progress-row" style="display:none; align-items:center; gap:8px; padding:6px 20px; background:#fff7ed; border-bottom:1px solid #fed7aa;">
+                    <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
+                    <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
                 </div>
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-400 text-center p-10">
