@@ -188,7 +188,9 @@ def _load_local_llm():
         _LOCAL_LLM_LOAD_ERROR = "找不到 GGUF 模型檔"
         return None
 
+    # 第一次嘗試：完整參數（關閉進階指令集相關選項）
     try:
+        print(f"[LLM] 嘗試載入模型（完整參數）: {gguf_path}", flush=True)
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
@@ -197,13 +199,33 @@ def _load_local_llm():
             n_batch=int(os.environ.get("AMA_LLM_BATCH", "256")),
             use_mmap=True,
             use_mlock=False,
-            f16_kv=True,
+            tensor_split=None,
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
+        print("[LLM] 模型載入成功（完整參數）", flush=True)
         return _LOCAL_LLM
     except Exception as e:
-        _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 載入失敗: {e}"
+        print(f"[LLM] 第一次載入失敗：{e}", flush=True)
+        print("[LLM] 嘗試最小化參數重試（移除 n_threads_batch）...", flush=True)
+
+    # 第二次嘗試：移除可能觸發進階指令集的參數
+    try:
+        _LOCAL_LLM = Llama(
+            model_path=str(gguf_path),
+            n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", "4")),
+            n_batch=int(os.environ.get("AMA_LLM_BATCH", "256")),
+            use_mmap=True,
+            use_mlock=False,
+            verbose=False,
+        )
+        _LOCAL_LLM_LOAD_ERROR = None
+        print("[LLM] 模型載入成功（最小化參數）", flush=True)
+        return _LOCAL_LLM
+    except Exception as e2:
+        print(f"[LLM] 第二次載入失敗：{e2}", flush=True)
+        _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 載入失敗: {e2}"
         return None
 
 

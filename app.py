@@ -503,9 +503,19 @@ def handle_export_summary(data):
 
 def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
     """背景完成停止後剩餘音頻的轉寫"""
+    t0 = time.time()
+    print(f"[Stop] _finish_transcription 開始，remaining size={getattr(remaining, 'size', None)}", flush=True)
+
     if remaining is None or remaining.size == 0:
+        print(f"[Stop] 無剩餘 buffer，直接結束 ({time.time()-t0:.2f}s)", flush=True)
         return
+
+    t1 = time.time()
+    print(f"[Stop] 開始 transcribe_audio ({time.time()-t0:.2f}s)", flush=True)
     final_segments = stt.transcribe_audio(remaining)
+    print(f"[Stop] transcribe_audio 完成，segments={len(final_segments)} ({time.time()-t1:.2f}s)", flush=True)
+
+    t2 = time.time()
     for seg in final_segments:
         with _transcript_lock:
             line = {
@@ -517,6 +527,7 @@ def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
             }
             transcript_lines.append(line)
         socketio.emit("transcript_update", line, room=sid)
+    print(f"[Stop] emit 完成，總耗時 {time.time()-t0:.2f}s", flush=True)
 
 
 # n_ctx=4096，扣除 system prompt(~300) + 輸出(512)，可用 input ≈ 3284 tokens ≈ 2100 中文字
