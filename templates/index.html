@@ -281,12 +281,6 @@
                             <h2 class="font-bold text-slate-900 text-[28px] leading-tight" data-i18n="transcript_title">即時逐字稿</h2>
                         </div>
                         <div class="flex items-center gap-2 flex-nowrap justify-end">
-                            <button id="edit-transcript-btn" onclick="startEditTranscript()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
-                                <i data-lucide="pencil-line" class="w-4 h-4 text-orange-500"></i> <span data-i18n="edit_transcript">編輯</span>
-                            </button>
-                            <button id="edit-done-btn" onclick="finishEditTranscript()" class="hidden flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all">
-                                <i data-lucide="check" class="w-4 h-4"></i> <span data-i18n="edit_done">完成</span>
-                            </button>
                             <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
                                 <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span>編輯全文</span>
                             </button>
@@ -545,7 +539,6 @@
         let connectionState = 'connecting';
         let recordingSessionReady = false;
         let lastCompletedMeetingName = '';
-        let isTranscriptEditing = false;
         let transcriptRawLines = [];
         let transcriptTimestamps = [];
         let transcriptLineNodes = [];
@@ -605,8 +598,6 @@
                 summary_loading: '正在呼叫本地摘要模型進行分析...',
                 summary_loading_for: '正在產生：{title}',
                 export_transcript: '匯出逐字稿',
-                edit_transcript: '編輯',
-                edit_done: '完成',
                 export_summary: '匯出摘要',
                 export_full: '匯出全文摘要',
                 export_key: '匯出重點條列',
@@ -693,8 +684,6 @@
                 summary_loading: 'Running local summary model for analysis...',
                 summary_loading_for: 'Generating: {title}',
                 export_transcript: 'Export Transcript',
-                edit_transcript: 'Edit',
-                edit_done: 'Done',
                 export_summary: 'Export Summary',
                 export_full: 'Export Full Summary',
                 export_key: 'Export Key Points',
@@ -1371,7 +1360,6 @@
                 transcriptTimestamps = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
-                isTranscriptEditing = false;
                 summaryCache = { full: null, key_points: null };
                 summaryCacheSourceText = '';
                 summaryViewMode = 'single';
@@ -1582,9 +1570,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const modelSelect = document.getElementById('stt-model-select');
             const langSelect = document.getElementById('lang-mode-select');
             const saveAudioCheckbox = document.getElementById('save-audio');
-            const editBtn = document.getElementById('edit-transcript-btn');
-            const editDoneBtn = document.getElementById('edit-done-btn');
-
             switch (currentState) {
                 case 'idle':
                     btn.innerHTML = `<i data-lucide="mic" class="w-4 h-4"></i> <span>${t('start_meeting')}</span>`;
@@ -1642,13 +1627,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 allSummaryBtn.classList.toggle('cursor-not-allowed', summaryBlocked);
             }
             const fulltextEditBtn = document.getElementById('fulltext-edit-btn');
-            [editBtn, editDoneBtn, fulltextEditBtn].forEach((el) => {
-                if (!el || el.classList.contains('hidden')) return;
+            if (fulltextEditBtn && !fulltextEditBtn.classList.contains('hidden')) {
                 const locked = transcriptBusy || transcriptOpsLockedBySummary;
-                el.disabled = locked;
-                el.classList.toggle('opacity-50', locked);
-                el.classList.toggle('cursor-not-allowed', locked);
-            });
+                fulltextEditBtn.disabled = locked;
+                fulltextEditBtn.classList.toggle('opacity-50', locked);
+                fulltextEditBtn.classList.toggle('cursor-not-allowed', locked);
+            }
             updateSessionStage();
             lucide.createIcons();
         }
@@ -1777,7 +1761,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         function setTranscriptOpsLocked(locked) {
             transcriptOpsLockedBySummary = Boolean(locked);
-            ['edit-transcript-btn', 'edit-done-btn', 'fulltext-edit-btn'].forEach((id) => {
+            ['fulltext-edit-btn'].forEach((id) => {
                 const btn = document.getElementById(id);
                 if (!btn || btn.classList.contains('hidden')) return;
                 btn.disabled = transcriptOpsLockedBySummary;
@@ -1836,62 +1820,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             showToast('摘要產生中，請稍候再編輯逐字稿。');
             return true;
         }
-
-        function startEditTranscript() {
-            if (guardTranscriptOpsLocked()) return;
-            if (currentState !== 'idle') {
-                showToast(t('alert_edit_blocked'));
-                return;
-            }
-            renderTranscriptFromLines(true);
-            const linesRoot = document.getElementById('transcript-lines');
-            if (!linesRoot || !getTranscriptForSummary()) {
-                showToast(t('empty_transcript'));
-                return;
-            }
-            isTranscriptEditing = true;
-            linesRoot.setAttribute('contenteditable', 'true');
-            linesRoot.focus();
-            linesRoot.classList.add('outline-none', 'ring-2', 'ring-orange-300', 'rounded-md', 'p-2', 'bg-orange-50/40');
-            document.getElementById('edit-transcript-btn')?.classList.add('hidden');
-            document.getElementById('edit-done-btn')?.classList.remove('hidden');
-        }
-
-        function finishEditTranscript() {
-            if (guardTranscriptOpsLocked()) return;
-            if (currentState !== 'idle') {
-                showToast(t('alert_edit_blocked'));
-                return;
-            }
-            const linesRoot = document.getElementById('transcript-lines');
-            if (!linesRoot) return;
-            const oldMax = Math.max(
-                transcriptRawLines.length,
-                transcriptLineNodes.length
-            );
-            // innerText 會把 <span>時間戳</span><span>文字</span> 串接成 "HH:MM:SS文字"
-            // 需去除行首的 HH:MM:SS 前綴，避免時間戳重複顯示且混入摘要/匯出內容
-            const TS_PREFIX = /^\d{2}:\d{2}:\d{2}\s*/;
-            const editedLines = (linesRoot.innerText || '')
-                .split(/\n+/)
-                .map((line) => normalizeTranscriptLine(line.replace(TS_PREFIX, '')))
-                .filter(Boolean);
-            transcriptRawLines = editedLines.slice();
-            transcriptLineNodes = [];
-            transcriptDirtyIndices = new Set();
-            const nextMax = Math.max(oldMax, editedLines.length);
-            for (let i = 0; i < nextMax; i++) {
-                transcriptDirtyIndices.add(i);
-            }
-            linesRoot.innerHTML = '';
-            isTranscriptEditing = false;
-            linesRoot.removeAttribute('contenteditable');
-            linesRoot.classList.remove('outline-none', 'ring-2', 'ring-orange-300', 'rounded-md', 'p-2', 'bg-orange-50/40');
-            document.getElementById('edit-transcript-btn')?.classList.remove('hidden');
-            document.getElementById('edit-done-btn')?.classList.add('hidden');
-            renderTranscriptFromLines();
-        }
-
 
         // ── 全文編輯模式 ───────────────────────────────────
 
@@ -2100,10 +2028,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         // ── 摘要操作 ────────────────────────────────────
 
         function getTranscriptForSummary() {
-            if (isTranscriptEditing) {
-                const linesRoot = document.getElementById('transcript-lines');
-                return normalizeTranscriptLine(linesRoot ? linesRoot.innerText : '');
-            }
             const maxLen = transcriptRawLines.length;
             const merged = [];
             for (let i = 0; i < maxLen; i++) {
