@@ -335,9 +335,9 @@
                         </button>
                     </div>
                     <!-- 摘要進度列 + 取消按鈕（生成中才顯示） -->
-                    <div id="summary-progress-row" class="hidden mt-2 flex items-center gap-3">
-                        <span id="summary-progress-label" class="text-xs text-orange-600 font-medium flex-1"></span>
-                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all">取消</button>
+                    <div id="summary-progress-row" class="mt-2" style="display:none; align-items:center; gap:8px;">
+                        <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
+                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
                     </div>
                 </div>
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
@@ -944,7 +944,7 @@
             const row = document.getElementById('summary-progress-row');
             const label = document.getElementById('summary-progress-label');
             if (!row || !label) return;
-            row.classList.remove('hidden');
+            row.style.display = 'flex';
             if (data.stage === 'final') {
                 label.textContent = '最終整合中...';
             } else {
@@ -962,7 +962,7 @@
                     const container = document.getElementById('summary-container');
                     target = document.getElementById('summary-stream-all');
                     if (!target) {
-                        container.innerHTML = '<div id="summary-stream-all" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap"></div>';
+                        container.innerHTML = '<div id="summary-stream-all" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;"></div>';
                         target = document.getElementById('summary-stream-all');
                     }
                 }
@@ -971,7 +971,7 @@
                 target = document.getElementById(`summary-stream-${data.mode}`);
                 if (!target) {
                     document.getElementById('summary-container').innerHTML =
-                        `<div id="summary-stream-${data.mode}" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap"></div>`;
+                        `<div id="summary-stream-${data.mode}" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;"></div>`;
                     target = document.getElementById(`summary-stream-${data.mode}`);
                 }
             }
@@ -1803,7 +1803,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             }
             if (summaryRequestInFlight === 0) {
                 const row = document.getElementById('summary-progress-row');
-                if (row) row.classList.add('hidden');
+                if (row) row.style.display = 'none';
             }
         }
 
@@ -1813,7 +1813,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryRequestInFlight = 0;
             setTranscriptOpsLocked(false);
             const row = document.getElementById('summary-progress-row');
-            if (row) row.classList.add('hidden');
+            if (row) row.style.display = 'none';
             showToast('摘要已取消');
         }
 
@@ -1821,7 +1821,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryRequestInFlight = 0;
             setTranscriptOpsLocked(false);
             const row = document.getElementById('summary-progress-row');
-            if (row) row.classList.add('hidden');
+            if (row) row.style.display = 'none';
         }
 
         function guardTranscriptOpsLocked() {
@@ -2174,7 +2174,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const container = document.getElementById('summary-container');
             container.innerHTML = `
                 <div class="prose prose-sm max-w-none">
-                    <div class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(content)}</div>
+                    <div class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;">${escapeHtml(content)}</div>
                 </div>
             `;
         }
@@ -2207,7 +2207,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const html = `
                 <div class="border border-emerald-100 rounded-lg p-4 bg-white">
                     <div class="text-sm font-semibold text-slate-900 mb-2">${title}</div>
-                    <div class="bg-slate-50 p-3 rounded border border-emerald-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(content)}</div>
+                    <div class="bg-slate-50 p-3 rounded border border-emerald-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;">${escapeHtml(content)}</div>
                 </div>
             `;
 
