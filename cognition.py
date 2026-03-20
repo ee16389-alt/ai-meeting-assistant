@@ -7,6 +7,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 import requests
@@ -21,7 +22,7 @@ except Exception as e:
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
 MODEL = "qwen2.5:3b"
-TEMPERATURE = 0.0
+TEMPERATURE = 0.3
 
 _LOCAL_LLM = None
 _LOCAL_LLM_LOCK = threading.Lock()
@@ -190,11 +191,13 @@ def _load_local_llm():
     try:
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
-            n_ctx=int(os.environ.get("AMA_LLM_CTX", "8192")),
-            n_threads=int(os.environ.get("AMA_LLM_THREADS", str(os.cpu_count() or 4))),
-            n_batch=int(os.environ.get("AMA_LLM_BATCH", "1024")),
-            use_mlock=True,
-            flash_attn=True,
+            n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", "4")),
+            n_threads_batch=int(os.environ.get("AMA_LLM_THREADS_BATCH", "8")),
+            n_batch=int(os.environ.get("AMA_LLM_BATCH", "256")),
+            use_mmap=True,
+            use_mlock=False,
+            f16_kv=True,
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
@@ -228,53 +231,79 @@ def _is_looping(text: str) -> bool:
     return False
 
 
+_LLM_STREAM_TIMEOUT = 120  # 單次串流最長允許時間（秒）
+
+
 def _call_model_stream(system_prompt: str, user_prompt: str):
-    """串流輸出模式，讓前端能即時看到字。"""
+    """串流輸出模式，讓前端能即時看到字。
+
+    Lock 策略：只在建立 stream 物件時持鎖，建立完成後立即釋放，
+    讓 yield chunk 的過程在 lock 外執行，避免長時間佔用 LLM 資源。
+    超過 _LLM_STREAM_TIMEOUT 秒後拋出 TimeoutError。
+    """
     llm = _load_local_llm()
     if llm is None:
         yield f"[錯誤] {_LOCAL_LLM_LOAD_ERROR or '本地模型未就緒'}"
         return
 
+    # ── 建立 stream：持鎖期間只呼叫 create_*，不 yield ──
+    stream = None
+    use_chat_mode = True
     with _LOCAL_LLM_LOCK:
         try:
-            # 優先嘗試 Chat 模式
             stream = llm.create_chat_completion(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TEMPERATURE,
-                repeat_penalty=1.3,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
+                repeat_penalty=1.1,
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stream=True,
             )
-            accumulated = ""
-            for chunk in stream:
-                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                if delta:
-                    accumulated += delta
-                    yield delta
-                    if _is_looping(accumulated):
-                        break
         except Exception:
-            # Fallback 模式
+            # Chat 模式不可用，改用 completion 模式
+            use_chat_mode = False
             prompt = f"System:\n{system_prompt}\n\nUser:\n{user_prompt}\n\nAssistant:\n"
             stream = llm.create_completion(
                 prompt=prompt,
                 temperature=TEMPERATURE,
-                repeat_penalty=1.3,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
+                repeat_penalty=1.1,
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stop=["User:", "\nSystem:"],
                 stream=True,
             )
-            accumulated = ""
-            for chunk in stream:
-                text = chunk.get("choices", [{}])[0].get("text", "")
-                if text:
-                    accumulated += text
-                    yield text
-                    if _is_looping(accumulated):
-                        break
+    # lock 已釋放，以下 yield 在 lock 外執行
+
+    # ── 消費 stream：lock 外，帶超時保護 ──
+    accumulated = ""
+    token_usage: dict = {}
+    start_time = time.time()
+
+    for chunk in stream:
+        if time.time() - start_time > _LLM_STREAM_TIMEOUT:
+            raise TimeoutError(f"LLM 串流超過 {_LLM_STREAM_TIMEOUT} 秒，中止輸出")
+        if chunk.get("usage"):
+            token_usage = chunk["usage"]
+        if use_chat_mode:
+            delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+        else:
+            delta = chunk.get("choices", [{}])[0].get("text", "")
+        if delta:
+            accumulated += delta
+            yield delta
+            if _is_looping(accumulated):
+                break
+
+    if token_usage:
+        print(
+            f"[LLM] tokens — prompt: {token_usage.get('prompt_tokens', '?')}, "
+            f"completion: {token_usage.get('completion_tokens', '?')}, "
+            f"total: {token_usage.get('total_tokens', '?')}",
+            flush=True,
+        )
+    else:
+        print(f"[LLM] output ~{len(accumulated)} chars (usage not reported by this build)", flush=True)
 
 
 def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
@@ -290,7 +319,14 @@ def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=TEMPERATURE,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
+            )
+            usage = resp.get("usage", {})
+            print(
+                f"[LLM] tokens — prompt: {usage.get('prompt_tokens', '?')}, "
+                f"completion: {usage.get('completion_tokens', '?')}, "
+                f"total: {usage.get('total_tokens', '?')}",
+                flush=True,
             )
             return (
                 resp.get("choices", [{}])[0]
@@ -308,8 +344,15 @@ def _call_local_gguf(system_prompt: str, user_prompt: str) -> str:
             resp = llm.create_completion(
                 prompt=prompt,
                 temperature=TEMPERATURE,
-                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "768")),
+                max_tokens=int(os.environ.get("AMA_LLM_MAX_TOKENS", "512")),
                 stop=["User:", "\nSystem:"],
+            )
+            usage = resp.get("usage", {})
+            print(
+                f"[LLM] tokens — prompt: {usage.get('prompt_tokens', '?')}, "
+                f"completion: {usage.get('completion_tokens', '?')}, "
+                f"total: {usage.get('total_tokens', '?')}",
+                flush=True,
             )
             return (
                 resp.get("choices", [{}])[0]
@@ -693,49 +736,9 @@ def _call_ollama_chat(system_prompt: str, user_prompt: str) -> str:
     return resp.json().get("message", {}).get("content", "").strip()
 
 
-def proofread_text(text: str) -> str:
-    """修正 STT 逐字稿的錯字、同音字、標點（若模型繁忙則跳過）"""
-    system_prompt = (
-        "你是一位專業的繁體中文文字校對員，擅長處理語音轉文字（ASR）後的原始稿件。\n\n"
-        "【執行任務】\n"
-        "精準斷句：根據語意加入正確的繁體中文全形標點符號。特別注意語氣，區分句號與問號。\n"
-        "智能錯字修正：修正同音異義字、語音辨識常見錯誤，並根據上下文恢復正確的專有名詞（含技術術語）。\n"
-        "語音去噪：刪除不具備語意的口語贅詞（如：呃、那個、然後、或者是、我覺得說...等），使文句流暢。\n"
-        "忠於原意：除了刪除贅詞與修正錯字外，嚴禁擅自改寫、增加或刪減核心討論內容。\n\n"
-        "【輸出限制】\n"
-        "僅輸出修正後的結果。\n"
-        "嚴禁加入任何說明、標題、前綴或「好的，這是修正後的內容」等引言。"
-        + COMMON_OUTPUT_GUARDRAILS
-    )
-    # 非阻塞模式：若 LLM 鎖忙碌超過 30 秒則放棄此次校對，避免與摘要任務互搶
-    llm = _load_local_llm()
-    if llm is None:
-        return ""   # GGUF 不可用，跳過
-    if not _LOCAL_LLM_LOCK.acquire(blocking=True, timeout=30.0):
-        return ""   # 模型繁忙，跳過此段校對
-    try:
-        resp = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text},
-            ],
-            temperature=TEMPERATURE,
-            max_tokens=min(len(text) * 2, 512),
-        )
-        return (
-            resp.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
-        )
-    except Exception:
-        return ""
-    finally:
-        _LOCAL_LLM_LOCK.release()
 
-
-def summarize_full(text: str) -> str:
-    """全文摘要"""
+def summarize_full(text: str):
+    """全文摘要（streaming generator，逐 token yield）"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
@@ -745,11 +748,14 @@ def summarize_full(text: str) -> str:
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
-    return _summarize_with_guard("full", text, system_prompt)
+    if _is_info_insufficient(text):
+        yield _insufficient_info_fallback(text, "full")
+        return
+    yield from _call_model_stream(system_prompt, text)
 
 
-def summarize_key_points(text: str) -> str:
-    """重點條列摘要（數量由模型依內容自行決定，最多 100 點）"""
+def summarize_key_points(text: str):
+    """重點條列摘要（streaming generator，逐 token yield）"""
     system_prompt = (
         "你是一位專業的會議記錄員。"
         "請用繁體中文輸出。"
@@ -760,24 +766,10 @@ def summarize_key_points(text: str) -> str:
         "若資訊不足，僅輸出「逐字稿資訊不足」。"
         + COMMON_OUTPUT_GUARDRAILS
     )
-    return _summarize_with_guard("key_points", text, system_prompt)
-
-
-def extract_action_items(text: str) -> str:
-    """提取待辦清單"""
-    system_prompt = (
-        "你是一位專業的會議記錄員。"
-        "請用繁體中文輸出。"
-        "只列出逐字稿中明確提到的待辦事項、後續動作、需確認的事項。"
-        "不可捏造、補充、或推測任何未在逐字稿中出現的行動。"
-        "不得輸出「補充背景」「待確認」「下一步」等模糊提示，只輸出具體的行動項目。"
-        "不得輸出逐字稿校正建議、英文改寫建議、錯字修正文。"
-        "如果逐字稿只是分享經驗、說明概念，沒有明確指派動作，請直接輸出「無明確待辦事項」。"
-        "每個項目獨立一行，格式為「- [ ] 具體行動」。"
-        "若資訊不足或無待辦事項，輸出「無明確待辦事項」。"
-        + COMMON_OUTPUT_GUARDRAILS
-    )
-    return _summarize_with_guard("action_items", text, system_prompt)
+    if _is_info_insufficient(text):
+        yield _insufficient_info_fallback(text, "key_points")
+        return
+    yield from _call_model_stream(system_prompt, text)
 
 
 def summarize_all_in_one(text: str) -> dict:

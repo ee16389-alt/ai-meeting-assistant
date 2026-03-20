@@ -154,7 +154,8 @@ def _find_sherpa_model_dir() -> Path | None:
 
 class STTEngine:
     SAMPLE_RATE = 16000
-    SILENCE_THRESHOLD = 0.003
+    SILENCE_THRESHOLD = 0.008  # VAD 靜音門檻（RMS）
+    CHUNK_SAMPLES = 480         # 30ms @ 16kHz
 
     def __init__(self, model_size: str = "base"):
         if sherpa_onnx is None:
@@ -179,6 +180,9 @@ class STTEngine:
         self._last_text_change_time = 0.0
         self._TEXT_STALE_TIMEOUT = 1.5  # 文字超過 1.5 秒沒變化 → 強制輸出
 
+        # 20ms chunk buffer：累積 samples 後以 320 個為單位送 Sherpa
+        self._sample_buffer = np.array([], dtype=np.float32)
+
         # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
         self._audio_queue: queue.Queue = queue.Queue(maxsize=300)
         self._worker_thread = threading.Thread(
@@ -202,8 +206,7 @@ class STTEngine:
             decoder = str(local_dir / "decoder.onnx")
         tokens = str(local_dir / "tokens.txt")
 
-        cpu_count = os.cpu_count() or 4
-        num_threads = max(2, min(6, cpu_count // 2))
+        num_threads = 2
 
         print(f"[STT] 使用本地模型: {local_dir}", flush=True)
         return sherpa_onnx.OnlineRecognizer.from_paraformer(
@@ -252,6 +255,7 @@ class STTEngine:
             self._time_offset_sec = 0.0
             self._last_seen_text = ""
             self._last_text_change_time = 0.0
+            self._sample_buffer = np.array([], dtype=np.float32)
             self._state = State.RECORDING
             return self._state.value
 
@@ -289,12 +293,28 @@ class STTEngine:
         return "stopped", []
 
     def reset(self):
+        """清除所有內部狀態，確保新會議從乾淨狀態開始。"""
         with self._lock:
             self._stream = self._recognizer.create_stream()
             self._last_partial_text = ""
             self._last_confirmed_text = ""
+            self._last_seen_text = ""
+            self._last_text_change_time = 0.0
+            self._last_audio_rms = 0.0
+            self._current_speaker = 1
             self._time_offset_sec = 0.0
+            self._sample_buffer = np.array([], dtype=np.float32)
             self._state = State.IDLE
+        # 清空 audio queue（鎖外執行，避免與 worker thread 競態）
+        drained = 0
+        while not self._audio_queue.empty():
+            try:
+                self._audio_queue.get_nowait()
+                drained += 1
+            except queue.Empty:
+                break
+        if drained:
+            print(f"[STT] reset: drained {drained} stale chunk(s) from queue", flush=True)
 
     def set_result_callback(self, cb):
         """設定辨識結果回呼，由推論執行緒呼叫"""
@@ -346,18 +366,27 @@ class STTEngine:
             print(f"[STT] PCM 解析錯誤: {e}", flush=True)
             return
 
+        # 累積進 buffer，以 CHUNK_SAMPLES (20ms) 為單位處理
+        self._sample_buffer = np.concatenate([self._sample_buffer, samples])
+        while len(self._sample_buffer) >= self.CHUNK_SAMPLES:
+            window = self._sample_buffer[:self.CHUNK_SAMPLES]
+            self._sample_buffer = self._sample_buffer[self.CHUNK_SAMPLES:]
+            self._process_window(window, stream)
+
+    def _process_window(self, samples: np.ndarray, stream) -> None:
+        """處理單一 20ms 音訊窗口：VAD → Sherpa decode → endpoint/stale 判斷"""
         rms = float(np.sqrt(np.mean(np.square(samples))))
         with self._lock:
             self._last_audio_rms = rms
 
+        # VAD：RMS 低於門檻，靜音跳過，不送 Sherpa
+        if rms < self.SILENCE_THRESHOLD:
+            return
+
         # 送入串流辨識器並解碼
         stream.accept_waveform(self.SAMPLE_RATE, samples)
-        ready_count = 0
         while self._recognizer.is_ready(stream):
             self._recognizer.decode_stream(stream)
-            ready_count += 1
-        if ready_count == 0:
-            print("[STT] is_ready=False, no decode this chunk", flush=True)
 
         result = self._recognizer.get_result(stream)
         text = (result.text if hasattr(result, "text") else str(result)).strip()
@@ -366,7 +395,7 @@ class STTEngine:
         if text:
             print(f"[STT] partial={repr(text[:40])} endpoint={is_ep}", flush=True)
 
-        # 時間 fallback：文字超過 2 秒沒變化就強制輸出
+        # 時間 fallback：文字超過 stale timeout 沒變化就強制輸出
         now = time.monotonic()
         if text != self._last_seen_text:
             self._last_seen_text = text
@@ -377,10 +406,9 @@ class STTEngine:
 
         if is_ep or stale:
             reason = "endpoint" if is_ep else "stale_timeout"
-            # 保存觸發 endpoint 的 chunk，reset 後回放以補救段落邊界漏字
+            # 保存觸發 endpoint 的 window，reset 後回放以補救段落邊界漏字
             boundary_chunk = samples.copy()
-            # Paraformer-bilingual chunk_size = 320ms，加 1.5s padding（> 4 chunks）
-            # 確保 encoder buffer + right_context 最後幾幀完整刷出
+            # 加 1.5s padding 確保 encoder buffer + right_context 完整刷出
             tail = np.zeros(int(1.5 * self.SAMPLE_RATE), dtype=np.float32)
             stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
@@ -398,8 +426,7 @@ class STTEngine:
             self._last_confirmed_text = ""  # 清除跨段去重記憶，避免新段開頭被誤判重複
             with self._lock:
                 self._last_partial_text = ""
-            # 回放 boundary chunk：該 chunk 可能含有下一段開頭的音訊
-            # 讓 encoder 從這裡熱身，避免新段前幾字因上下文不足而丟失
+            # 回放 boundary chunk 讓 encoder 熱身，避免新段前幾字丟失
             stream.accept_waveform(self.SAMPLE_RATE, boundary_chunk)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
@@ -409,6 +436,7 @@ class STTEngine:
                 self._last_seen_text = warmup_text
                 self._last_text_change_time = time.monotonic()
         else:
+            # 有變動才 emit partial，避免重複推送
             trad = _to_traditional(text) if text else ""
             with self._lock:
                 changed = trad != self._last_partial_text

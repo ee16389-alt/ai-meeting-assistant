@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 import sys
 import threading
 import time
@@ -42,7 +41,6 @@ from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
 from cognition import (
-    proofread_text,
     summarize_full,
     summarize_key_points,
     summarize_all_in_one,
@@ -59,6 +57,12 @@ socketio = SocketIO(
     cors_allowed_origins="*",
     max_http_buffer_size=10 * 1024 * 1024,
     async_mode="threading",
+    # 延長心跳超時，防止本地 LLM 推論期間（可能長達數分鐘）連線被切斷。
+    # ping_interval=30：每 30 秒發一次心跳；
+    # ping_timeout=120：120 秒內無回應才判定斷線。
+    # threading 模式無 HTTP request timeout，SocketIO ping 是唯一的連線保活機制。
+    ping_interval=30,
+    ping_timeout=120,
 )
 
 class _UnavailableSTT:
@@ -129,7 +133,7 @@ def _make_stt_callback(session_sid: str, session_token: str):
             with _transcript_lock:
                 line = {
                     "index": len(transcript_lines),
-                    "text": _apply_corrections(seg["text"]),
+                    "text": seg["text"],
                     "timestamp": time.strftime("%H:%M:%S"),
                     "language": seg.get("language", ""),
                     "token": session_token,
@@ -174,38 +178,12 @@ threading.Thread(target=_init_stt_background, daemon=True).start()
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
 _transcript_lock = threading.Lock()
-proofread_index = 0  # 追蹤下一個待校對的行號
 audio_chunk_count = 0
 _active_sid: str = ""  # 目前錄音的 client session id
 _recording_token: str = ""  # 每次錄音生成的唯一 token，前端用來過濾舊事件
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
-
-
-def _corrections_path() -> str:
-    return os.path.join(_export_root_dir(), "user_corrections.json")
-
-
-def _load_corrections() -> list[dict]:
-    try:
-        with open(_corrections_path(), encoding="utf-8") as f:
-            data = json.load(f)
-            return [c for c in data if c.get("from") and c.get("to")]
-    except Exception:
-        return []
-
-
-def _save_corrections(corrections: list[dict]) -> None:
-    os.makedirs(_export_root_dir(), exist_ok=True)
-    with open(_corrections_path(), "w", encoding="utf-8") as f:
-        json.dump(corrections, f, ensure_ascii=False, indent=2)
-
-
-def _apply_corrections(text: str) -> str:
-    for c in _load_corrections():
-        text = re.sub(re.escape(c["from"]), c["to"], text)
-    return text
 
 
 def _export_root_dir() -> str:
@@ -298,15 +276,15 @@ def handle_connect():
 
 @socketio.on("start_recording")
 def handle_start(data=None):
-    global transcript_lines, proofread_index, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token
+    global transcript_lines, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token
     _active_sid = request.sid
     _recording_token = uuid.uuid4().hex  # 每場錄音唯一 token
     # 重新綁定 STT callback，讓 closure 鎖定本場 sid 與 token
     if stt:
+        stt.reset()  # 確保 STT 狀態從乾淨狀態開始，清除上場殘留 buffer
         stt.set_result_callback(_make_stt_callback(_active_sid, _recording_token))
     with _transcript_lock:
         transcript_lines = []
-        proofread_index = 0
     audio_chunk_count = 0
     audio_save_enabled = False
     if audio_file_handle:
@@ -431,35 +409,6 @@ def handle_resume():
     return {"ok": True, "state": state}
 
 
-@socketio.on("get_corrections")
-def handle_get_corrections():
-    emit("corrections_list", {"corrections": _load_corrections()})
-
-
-@socketio.on("add_correction")
-def handle_add_correction(data):
-    from_word = (data.get("from") or "").strip()
-    to_word = (data.get("to") or "").strip()
-    if not from_word or not to_word:
-        emit("corrections_error", {"message": "來源詞與替換詞不可為空"})
-        return
-    corrections = _load_corrections()
-    if any(c["from"] == from_word for c in corrections):
-        emit("corrections_error", {"message": f"「{from_word}」已存在"})
-        return
-    corrections.append({"from": from_word, "to": to_word})
-    _save_corrections(corrections)
-    emit("corrections_list", {"corrections": corrections})
-
-
-@socketio.on("delete_correction")
-def handle_delete_correction(data):
-    from_word = (data.get("from") or "").strip()
-    corrections = [c for c in _load_corrections() if c["from"] != from_word]
-    _save_corrections(corrections)
-    emit("corrections_list", {"corrections": corrections})
-
-
 @socketio.on("stop_recording")
 def handle_stop():
     if stt.state == "error":
@@ -479,6 +428,7 @@ def handle_stop():
 
 @socketio.on("request_summary")
 def handle_summary(data):
+    sid = request.sid
     mode = data.get("mode", "full")
     # 優先使用前端傳來的逐字稿（含使用者編輯後內容），fallback 到後端快取
     transcript_override = (data.get("transcript_override") or "").strip()
@@ -486,14 +436,14 @@ def handle_summary(data):
         full_text = transcript_override
     else:
         full_text = "\n".join(
-            line.get("proofread", line["text"]) for line in transcript_lines
+            line["text"] for line in transcript_lines
         )
 
     if not full_text.strip():
         emit("error", {"message": "尚無逐字稿內容可供摘要"})
         return
 
-    socketio.start_background_task(_generate_summary, mode, full_text)
+    socketio.start_background_task(_generate_summary, mode, full_text, sid)
 
 
 @socketio.on("get_storage_path")
@@ -525,19 +475,12 @@ def handle_export(data):
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
         "key_points": data.get("summary_key", "").strip(),
+        "all": data.get("summary_all", "").strip(),
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
     socketio.start_background_task(_export_meeting, meeting_name, transcript_override, summary_overrides)
 
-
-@socketio.on("enhance_transcript")
-def handle_enhance_transcript():
-    sid = request.sid
-    with _transcript_lock:
-        lines_snapshot = list(enumerate(transcript_lines))
-    socketio.start_background_task(_proofread_all_lines, lines_snapshot, sid)
-    socketio.emit("enhance_done", room=sid)
 
 
 @socketio.on("export_summary")
@@ -548,6 +491,7 @@ def handle_export_summary(data):
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
         "key_points": data.get("summary_key", "").strip(),
+        "all": data.get("summary_all", "").strip(),
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -555,26 +499,6 @@ def handle_export_summary(data):
 
 
 # ── 背景任務 ───────────────────────────────────────────
-
-def _proofread_all_lines(lines_snapshot: list, sid: str):
-    """逐行序列校對，避免多個任務同時競搶 LLM 鎖而 timeout"""
-    for index, line in lines_snapshot:
-        if not line.get("proofread"):
-            _proofread_line(index, line["text"], sid)
-
-
-def _proofread_line(index: int, original_text: str, sid: str):
-    """背景校對單行逐字稿"""
-    proofread = proofread_text(original_text)
-    if proofread and not proofread.startswith("[錯誤]"):
-        with _transcript_lock:
-            if index < len(transcript_lines):
-                transcript_lines[index]["proofread"] = proofread
-        socketio.emit("proofread_update", {
-            "index": index,
-            "original": original_text,
-            "proofread": proofread,
-        }, room=sid)
 
 
 def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
@@ -595,21 +519,24 @@ def _finish_transcription(remaining: np.ndarray, sid: str, token: str):
         socketio.emit("transcript_update", line, room=sid)
 
 
-# n_ctx=8192，扣除 system prompt(~300) + 輸出(768)，可用 input ≈ 7100 tokens ≈ 4700 中文字
-_MAX_CHARS_SINGLE_PASS = 4500
+# n_ctx=4096，扣除 system prompt(~300) + 輸出(512)，可用 input ≈ 3284 tokens ≈ 2100 中文字
+# 80% 安全門檻：≤ 3276 tokens，對應約 2000 中文字
+_MAX_CHARS_SINGLE_PASS = 2000
 
 
 def _compress_long_transcript(full_text: str) -> str:
-    """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。"""
+    """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。
+    chunk_size 設為 2000 字，對應 n_ctx=4096 的 80% 以內（含 system prompt 開銷後仍安全）。
+    """
     from cognition import _call_model_stream
-    chunk_size = 4000
+    chunk_size = 2000
     chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
     total = len(chunks)
     mini_parts = []
     for idx, chunk in enumerate(chunks, 1):
-        socketio.emit("summary_chunk", {
+        socketio.emit("summary_token", {
             "mode": "_progress",
-            "chunk": f"正在處理第 {idx}/{total} 段逐字稿...\n"
+            "token": f"正在處理第 {idx}/{total} 段逐字稿...\n"
         })
         sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 3-5 句重點，只輸出摘要文字，不輸出其他說明。"
         user_p = f"【第 {idx}/{total} 段】\n{chunk}"
@@ -620,8 +547,12 @@ def _compress_long_transcript(full_text: str) -> str:
     return "\n\n".join(mini_parts)
 
 
-def _generate_summary(mode: str, full_text: str):
+def _generate_summary(mode: str, full_text: str, sid: str):
     """背景生成摘要（支援串流）"""
+    _STT_CORRECTION_HINT = (
+        "【語音辨識容錯】逐字稿可能含有語音辨識錯誤（同音異字、錯別字、專有名詞辨識錯誤），"
+        "請在理解內容時自動修正這些錯誤，但不需要特別說明修正了什麼，直接輸出正確內容即可。\n\n"
+    )
     _EXTRACTION_RULES = (
         "注意事項：\n"
         "- 日期只取最後所有人同意的版本，忽略討論中被否決的提案\n"
@@ -630,11 +561,14 @@ def _generate_summary(mode: str, full_text: str):
         "- 地點只填最終確認的執行地點\n"
         "- 排除寒暄、閒聊、純技術背景說明\n"
         "- 嚴格依據逐字稿內容，不推測補充\n"
-        "請直接輸出會議摘要，不輸出以上任何指示、範例或規則文字本身。"
+        "請直接輸出會議摘要，不輸出以上任何指示、範例或規則文字本身。\n"
+        "輸出語言：台灣繁體中文，不得含任何簡體字。"
     )
     system_prompt = ""
     if mode == "full":
         system_prompt = (
+            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
+            f"{_STT_CORRECTION_HINT}"
             "你是一位專業會議記錄分析師。請根據逐字稿的實際內容與會議性質，以台灣繁體中文撰寫全文摘要，嚴禁出現簡體字。\n\n"
             "根據會議類型自行選擇最合適的呈現方式，例如：\n"
             "- 決策型會議：說明背景、列出決議事項與待辦\n"
@@ -646,43 +580,43 @@ def _generate_summary(mode: str, full_text: str):
         )
     elif mode == "key_points":
         system_prompt = (
+            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
+            f"{_STT_CORRECTION_HINT}"
             "你是一位專業會議記錄分析師。請根據逐字稿，以台灣繁體中文條列本次會議的重點，嚴禁出現簡體字。\n\n"
             "輸出 3 到 7 個重點，每點一行，以「-」開頭，簡潔說明核心討論、共識或結論。\n"
-            "根據會議內容決定呈現哪些重點，不強制包含待辦或分類標籤。\n\n"
+            "根據會議內容決定呈現哪些重點。\n"
+            "若逐字稿中有明確提到待辦事項、後續行動或指派任務，在重點條列結尾加入以下區塊：\n"
+            "【待辦事項】\n"
+            "- [ ] 具體行動\n"
+            "若無明確待辦事項則不輸出此區塊。\n\n"
             f"{_EXTRACTION_RULES}"
         )
     elif mode == "all":
         system_prompt = (
-            "你是一位專業會議記錄分析師暨專案經理。請根據逐字稿，以台灣繁體中文輸出以下兩個區塊，嚴禁出現簡體字。\n\n"
-            "【輸出範例】（格式照此，內容換成本次會議）\n\n"
-            "【全文摘要】\n"
-            "會議背景：本次會議旨在確認 XX 系統的佈署時間、地點及採購預算。\n\n"
-            "關鍵內容：\n"
-            "- 進場日期定為 YYYY年M月D日，配合 XX 進行 XX。\n"
-            "- 執行地點確認為 XX，原定 XX 計畫取消。\n"
-            "- 採購總金額核定為 XXX 元；差額由 XX 從 XX 預算支應，由 XX 執行採購。\n"
-            "- 技術升級：XX 已由 XX 升級為 XX，XX 指標達到 XX。\n\n"
-            "【重點條列】\n"
-            "- [決議] 佈署時間確認為 YYYY年M月D日，配合 XX 停線保養進行。\n"
-            "- [決議] 執行地點為 XX，XX 測試計畫取消。\n"
-            "- [決議] 採購金額 XXX 元，差額由 XX 從 XX 預算支應。\n"
-            "- [待辦] XX（姓名）重開請購單，金額 XX，押交期 XX 到貨。\n"
-            "- [待辦] XX 需於 XX 前完成 XX。\n"
-            "- [問題] 若 XX 未如期完成，將產生 XX 風險或後果。\n\n"
+            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
+            f"{_STT_CORRECTION_HINT}"
+            "你是一位專業會議記錄分析師暨專案經理。請根據逐字稿，以台灣繁體中文輸出【全文摘要】與【重點條列】兩個區塊，嚴禁出現簡體字。\n\n"
+            "請根據會議類型自行選擇最合適的結構輸出，例如：\n"
+            "- 決策型：說明背景、列出決議與待辦\n"
+            "- 討論型：摘要各方觀點、共識與未決議題\n"
+            "- 技術型：說明問題、解法方向與後續行動\n"
+            "- 報告型：摘要報告重點與回應意見\n"
+            "- 其他：依內容自行判斷最清楚的結構\n"
+            "重點條列中，重要決議標註[決議]，待辦事項標註[待辦]，未解決問題標註[問題]。\n\n"
             f"{_EXTRACTION_RULES}"
         )
 
     # 告訴前端準備開始串流
-    socketio.emit("summary_start", {"mode": mode})
+    socketio.emit("summary_start", {"mode": mode}, room=sid)
 
     from cognition import _call_model_stream
 
     # 逐字稿過長時先分段壓縮，再送入最終摘要
     if len(full_text) > _MAX_CHARS_SINGLE_PASS:
-        socketio.emit("summary_chunk", {
+        socketio.emit("summary_token", {
             "mode": mode,
-            "chunk": f"逐字稿共約 {len(full_text)} 字，將分段處理後再彙整摘要...\n\n"
-        })
+            "token": f"逐字稿共約 {len(full_text)} 字，將分段處理後再彙整摘要...\n\n"
+        }, room=sid)
         full_text = _compress_long_transcript(full_text)
         source_label = "以下是各段逐字稿的重點摘要，請根據這些重點產出最終摘要"
     else:
@@ -696,29 +630,36 @@ def _generate_summary(mode: str, full_text: str):
         + "\n--- 內容結束 ---"
     )
     accumulated = ""
+    last_token_time = time.time()
     try:
         for chunk in _call_model_stream(system_prompt, grounded_prompt):
+            now = time.time()
+            # 心跳：若超過 10 秒未有新 token，emit keep_alive 防止連線因閒置被切斷
+            if now - last_token_time >= 10:
+                socketio.emit("keep_alive", {"mode": mode}, room=sid)
+                print(f"[Summary] keep_alive sent (gap: {now - last_token_time:.1f}s)", flush=True)
             accumulated += chunk
-            socketio.emit("summary_chunk", {"mode": mode, "chunk": _to_traditional(chunk)})
+            socketio.emit("summary_token", {"mode": mode, "token": _to_traditional(chunk)}, room=sid)
+            last_token_time = now
     except Exception as e:
         print(f"[Summary] 摘要生成例外: {e}", flush=True)
-        socketio.emit("error", {"message": f"摘要生成失敗：{e}"})
+        socketio.emit("summary_error", {"mode": mode, "message": "摘要產生中斷，請重試"}, room=sid)
+        return  # 例外路徑不送 summary_done，由前端 summary_error handler 解鎖
 
-    # 無論成功或失敗，一定送出 summary_result 讓前端解鎖計數器
+    # 僅成功路徑送出 summary_done
     accumulated = _to_traditional(accumulated)
-    socketio.emit("summary_result", {"mode": mode, "content": accumulated})
+    socketio.emit("summary_done", {"mode": mode, "content": accumulated}, room=sid)
 
 
 def _export_meeting(meeting_name: str, transcript_override: str = "", summary_overrides: dict = None):
-    """背景匯出逐字稿與摘要"""
+    """背景匯出逐字稿（有摘要時一併匯出）"""
     if transcript_override:
         full_text = transcript_override
     else:
         full_text = "\n".join(
-            line.get("proofread", line["text"]) for line in transcript_lines
+            line["text"] for line in transcript_lines
         )
 
-    # ... (逐字稿處理保持不變) ...
     # 組合逐字稿內容
     transcript_lines_out = []
     transcript_lines_out.append(f"會議名稱: {meeting_name}")
@@ -727,66 +668,84 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
     transcript_lines_out.append("")
     transcript_lines_out.append("【逐字稿】")
     transcript_lines_out.append("")
-    
+
     if transcript_override:
         transcript_lines_out.append(transcript_override)
     else:
         for item in transcript_lines:
             ts = item.get("timestamp", "")
-            text = item.get("proofread", item["text"])
+            text = item["text"]
             transcript_lines_out.append(f"[{ts}] {text}")
 
     transcript_content = "\n".join(transcript_lines_out)
 
-    # 處理摘要內容：僅使用前端傳來的快取內容，不在匯出時阻塞 LLM 重新推論
-    if summary_overrides and summary_overrides.get("full"):
-        summary_full = summary_overrides["full"]
-        summary_key = summary_overrides.get("key_points", "")
-    else:
-        summary_full = ""
-        summary_key = ""
+    # 判斷是否有摘要：有則各模式分別寫入獨立檔案，無則只匯出逐字稿
+    cached = summary_overrides or {}
+    summary_full = cached.get("full", "").strip()
+    summary_key = cached.get("key_points", "").strip()
+    summary_all = cached.get("all", "").strip()
 
-    summary_lines = []
-    summary_lines.append(f"會議名稱: {meeting_name}")
-    summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    summary_lines.append("=" * 50)
-    summary_lines.append("")
-    if summary_full or summary_key:
-        summary_lines.append("【全文摘要】")
-        summary_lines.append(summary_full or "（未生成）")
-        summary_lines.append("")
-        summary_lines.append("【重點條列】")
-        summary_lines.append(summary_key or "（未生成）")
-    else:
-        summary_lines.append("（摘要尚未生成，請在主畫面點選摘要按鈕後再次匯出）")
-    summary_content = "\n".join(summary_lines)
+    def _build_summary_file(title: str, content: str) -> str:
+        lines = [
+            f"會議名稱: {meeting_name}",
+            f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            "=" * 50,
+            "",
+            title,
+            content,
+        ]
+        return "\n".join(lines)
 
-    # 寫入檔案
+    # 每個有內容的模式對應一個檔名
+    summary_files: list[tuple[str, str]] = []  # (path, content)
+    if summary_full:
+        summary_files.append((
+            os.path.join(_meeting_output_dir(meeting_name), "summary_full.txt"),
+            _build_summary_file("【全文摘要】", summary_full),
+        ))
+    if summary_key:
+        summary_files.append((
+            os.path.join(_meeting_output_dir(meeting_name), "summary_key_points.txt"),
+            _build_summary_file("【重點條列】", summary_key),
+        ))
+    if summary_all:
+        summary_files.append((
+            os.path.join(_meeting_output_dir(meeting_name), "summary_all.txt"),
+            _build_summary_file("【全部摘要】", summary_all),
+        ))
+
+    # 寫入檔案（目標資料夾不存在時自動建立）
     export_dir = _meeting_output_dir(meeting_name)
-    os.makedirs(export_dir, exist_ok=True)
     transcript_path = os.path.join(export_dir, "transcript.txt")
-    summary_path = os.path.join(export_dir, "summary.txt")
+
     try:
+        os.makedirs(export_dir, exist_ok=True)
         with open(transcript_path, "w", encoding="utf-8") as f:
             f.write(transcript_content)
-        with open(summary_path, "w", encoding="utf-8") as f:
-            f.write(summary_content)
+        for path, content in summary_files:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+    except PermissionError:
+        socketio.emit("export_error", {"message": f"匯出失敗：權限不足，無法寫入至 {export_dir}"})
+        return
+    except OSError as e:
+        if getattr(e, "errno", None) == 28:  # ENOSPC
+            socketio.emit("export_error", {"message": "匯出失敗：磁碟空間不足"})
+        elif getattr(e, "errno", None) == 2:  # ENOENT (父目錄仍不存在)
+            socketio.emit("export_error", {"message": f"匯出失敗：路徑不存在 {export_dir}"})
+        else:
+            socketio.emit("export_error", {"message": f"匯出失敗：{e}"})
+        return
     except Exception as e:
-        socketio.emit("error", {"message": f"匯出失敗：{e}"})
+        socketio.emit("export_error", {"message": f"匯出失敗：{e}"})
         return
 
-    socketio.emit("export_ready", {
-        "files": [
-            {
-                "filename": f"{meeting_name}_transcript.txt",
-                "saved_path": transcript_path,
-            },
-            {
-                "filename": f"{meeting_name}_summary.txt",
-                "saved_path": summary_path,
-            },
-        ]
-    })
+    saved_files = [{"filename": f"{meeting_name}_transcript.txt", "saved_path": transcript_path}]
+    for path, _ in summary_files:
+        filename = os.path.basename(path)
+        saved_files.append({"filename": f"{meeting_name}_{filename}", "saved_path": path})
+
+    socketio.emit("export_ready", {"files": saved_files})
 
 
 def _export_summary(meeting_name: str, mode: str, transcript_override: str = "", summary_overrides: dict = None):
@@ -795,7 +754,7 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
         full_text = transcript_override
     else:
         full_text = "\n".join(
-            line.get("proofread", line["text"]) for line in transcript_lines
+            line["text"] for line in transcript_lines
         )
 
     cached = summary_overrides or {}
@@ -832,7 +791,7 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
     else:
         summary_content = "尚無內容可供匯出"
 
-    mode_suffix = {"full": "全文摘要", "key_points": "重點條列", "all": "完整摘要"}.get(mode, mode)
+    mode_suffix = {"full": "full", "key_points": "key_points", "all": "all"}.get(mode, mode)
     export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
     summary_filename = f"summary_{mode_suffix}.txt"
@@ -843,7 +802,7 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
     socketio.emit("export_ready", {
         "files": [
             {
-                "filename": f"{meeting_name}_{mode_suffix}.txt",
+                "filename": f"{meeting_name}_{summary_filename}",
                 "saved_path": summary_path,
             },
         ]

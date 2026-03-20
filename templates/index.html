@@ -33,7 +33,6 @@
         }
         .animate-pulse-red { animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
         .float-in { animation: float-in 0.45s ease both; }
-        .proofread-updated { border-left: 3px solid #22c55e; padding-left: 8px; transition: all 0.3s; }
         .tab-active { background: linear-gradient(135deg, #f36b21, #ff7f38); color: white; box-shadow: 0 10px 18px rgba(243, 107, 33, 0.28); }
         .tab-inactive { background-color: rgba(255, 255, 255, 0.82); color: #475569; border: 1px solid rgba(148,163,184,0.22); }
         .partial-line { border-left: 3px solid #f59e0b; }
@@ -288,34 +287,7 @@
                             <button id="edit-done-btn" onclick="finishEditTranscript()" class="hidden flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all">
                                 <i data-lucide="check" class="w-4 h-4"></i> <span data-i18n="edit_done">完成</span>
                             </button>
-                            <button id="enhance-btn" onclick="enhanceTranscript()" class="flex items-center gap-2 bg-white hover:bg-emerald-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-emerald-200">
-                                <i data-lucide="sparkles" class="w-4 h-4 text-emerald-600"></i> <span data-i18n="enhance_transcript">文字校對</span>
-                            </button>
-                            <button id="enhance-undo-btn" onclick="undoEnhance()" class="hidden flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-slate-200">
-                                <i data-lucide="rotate-ccw" class="w-4 h-4 text-slate-600"></i> <span data-i18n="undo_enhance">復原</span>
-                            </button>
-                            <button onclick="openCorrectionsModal()" class="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-slate-200">
-                                <i data-lucide="book-open" class="w-4 h-4 text-slate-600"></i> 詞彙設定
-                            </button>
-                        </div>
-                    </div>
 
-                    <!-- 詞彙設定 Modal -->
-                    <div id="corrections-modal" class="hidden fixed inset-0 bg-black/40 flex items-center justify-center" style="z-index:999;">
-                        <div class="bg-white rounded-2xl shadow-xl w-full max-w-lg mx-4 p-6">
-                            <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-lg font-bold text-slate-900">自訂詞彙修正</h3>
-                                <button onclick="closeCorrectionsModal()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
-                            </div>
-                            <p class="text-sm text-slate-500 mb-4">STT 辨識完成後，自動將「來源詞」替換為「正確詞」，適合修正專有名詞辨識錯誤。</p>
-                            <div class="flex gap-2 mb-4">
-                                <input id="correction-from" type="text" placeholder="辨識錯誤詞" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
-                                <span class="flex items-center text-slate-400">→</span>
-                                <input id="correction-to" type="text" placeholder="正確詞" class="flex-1 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400">
-                                <button onclick="addCorrection()" class="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm font-medium">新增</button>
-                            </div>
-                            <div id="corrections-table" class="space-y-2 max-h-60 overflow-y-auto"></div>
-                            <p id="corrections-error" class="hidden text-sm text-red-500 mt-2"></p>
                         </div>
                     </div>
                     <div class="summary-toolbar"></div>
@@ -495,32 +467,34 @@
             </div>
             <div class="text-sm text-slate-700 space-y-4 leading-relaxed">
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">1. 開始會議</div>
-                    <div>輸入會議名稱後，點擊「開始會議」。系統會啟動麥克風並即時顯示逐字稿。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_1_h"></div>
+                    <div data-i18n="guide_1_b"></div>
                 </div>
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">2. 錄音控制</div>
-                    <div>你可以在錄音中「暫停 / 繼續 / 停止」。停止後會做最後一段語音整理。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_2_h"></div>
+                    <div data-i18n="guide_2_b"></div>
                 </div>
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">3. 逐字稿編輯與校對</div>
-                    <div>錄音停止後可按「編輯」修改逐字稿。若啟用校對，系統會自動做文字修正。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_3_h"></div>
+                    <div data-i18n="guide_3_b"></div>
                 </div>
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">4. 產生 AI 摘要</div>
-                    <div>在右側可選擇「全文摘要 / 重點條列 / 全部摘要」。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_4_h"></div>
+                    <div data-i18n="guide_4_b"></div>
                 </div>
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">5. 匯出檔案</div>
-                    <div>可匯出逐字稿與摘要，檔案會同步寫入電腦的固定資料夾，並可直接用「開啟存放資料夾」查看。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_5_h"></div>
+                    <div data-i18n="guide_5_b"></div>
                 </div>
                 <div>
-                    <div class="font-semibold text-slate-900 mb-1">6. 離線使用說明</div>
-                    <div>只要模型已先下載完成（STT 與摘要模型），在無網路狀態下也可錄音、轉寫、摘要與匯出。</div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_6_h"></div>
+                    <div data-i18n="guide_6_b"></div>
                 </div>
-                <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900">
-                    建議：正式會議前先做 1 次 30 秒測試錄音，確認麥克風、模型與匯出流程正常。
+                <div>
+                    <div class="font-semibold text-slate-900 mb-1" data-i18n="guide_7_h"></div>
+                    <div data-i18n="guide_7_b"></div>
                 </div>
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-900" data-i18n="guide_tip"></div>
             </div>
         </div>
     </div>
@@ -548,14 +522,11 @@
         let currentLangMode = 'auto';
         let languageModesCache = null;
         let connectionState = 'connecting';
-        let transcriptBackupState = null;
         let recordingSessionReady = false;
         let lastCompletedMeetingName = '';
-        let hasEnhancedTranscript = false;
         let isTranscriptEditing = false;
         let transcriptRawLines = [];
         let transcriptTimestamps = [];
-        let transcriptProofreadLines = [];
         let transcriptLineNodes = [];
         let transcriptRenderTimer = null;
         let transcriptDirtyIndices = new Set();
@@ -615,16 +586,27 @@
                 export_transcript: '匯出逐字稿',
                 edit_transcript: '編輯',
                 edit_done: '完成',
-                enhance_transcript: '文字校對',
-                undo_enhance: '復原',
-                enhance_started: '正在進行文字校對...',
-                enhance_done: '文字校對完成',
                 export_summary: '匯出摘要',
                 export_full: '匯出全文摘要',
                 export_key: '匯出重點條列',
                 export_action: '匯出待辦清單',
                 export_all: '匯出全部摘要',
                 usage_guide: '使用說明',
+                guide_1_h: '1. 開始會議',
+                guide_1_b: '輸入會議名稱後，點擊「開始會議」。系統會啟動麥克風並即時顯示逐字稿。',
+                guide_2_h: '2. 錄音控制',
+                guide_2_b: '你可以在錄音中「暫停 / 繼續 / 停止」。停止後會做最後一段語音整理。',
+                guide_3_h: '3. 逐字稿編輯與校對',
+                guide_3_b: '錄音停止後可按「編輯」直接修改逐字稿內容。',
+                guide_4_h: '4. 產生 AI 摘要',
+                guide_4_b: '在右側可選擇「全文摘要 / 重點條列 / 全部摘要」。',
+                guide_5_h: '5. 重新生成摘要',
+                guide_5_b: '對摘要結果不滿意時，可點擊摘要區右上角的「重新生成」按鈕，系統將依目前逐字稿重新產生摘要並取代原本的內容。',
+                guide_6_h: '6. 匯出檔案',
+                guide_6_b: '可匯出逐字稿與摘要，檔案會同步寫入電腦的固定資料夾，並可直接用「開啟存放資料夾」查看。',
+                guide_7_h: '7. 離線使用說明',
+                guide_7_b: '只要模型已先下載完成（STT 與摘要模型），在無網路狀態下也可錄音、轉寫、摘要與匯出。',
+                guide_tip: '建議：正式會議前先做 1 次 30 秒測試錄音，確認麥克風、模型與匯出流程正常。',
                 contact_us: '聯絡我們',
                 storage_path_label: '目前存放位置：',
                 open_storage_folder: '開啟存放資料夾',
@@ -692,16 +674,27 @@
                 export_transcript: 'Export Transcript',
                 edit_transcript: 'Edit',
                 edit_done: 'Done',
-                enhance_transcript: 'Text Cleanup',
-                undo_enhance: 'Undo',
-                enhance_started: 'Cleaning transcript text...',
-                enhance_done: 'Transcript cleanup completed',
                 export_summary: 'Export Summary',
                 export_full: 'Export Full Summary',
                 export_key: 'Export Key Points',
                 export_action: 'Export Action Items',
                 export_all: 'Export All Summaries',
                 usage_guide: 'User Guide',
+                guide_1_h: '1. Start a Meeting',
+                guide_1_b: 'Enter a meeting name and click "Start Meeting". The microphone will activate and the live transcript will appear in real time.',
+                guide_2_h: '2. Recording Controls',
+                guide_2_b: 'You can Pause / Resume / Stop during recording. After stopping, the system finalizes the last audio segment.',
+                guide_3_h: '3. Transcript Editing & Proofreading',
+                guide_3_b: 'After stopping, click "Edit" to directly modify the transcript.',
+                guide_4_h: '4. Generate AI Summary',
+                guide_4_b: 'Choose "Full Summary", "Key Points", or "All Summaries" in the right panel.',
+                guide_5_h: '5. Regenerate Summary',
+                guide_5_b: 'If you are not satisfied with the summary, click the Regenerate button in the top-right corner of the summary area. The system will regenerate a new summary based on the current transcript, replacing the previous one.',
+                guide_6_h: '6. Export Files',
+                guide_6_b: 'Export the transcript and summaries. Files are saved to a fixed folder on your computer. Click "Open Folder" to locate them.',
+                guide_7_h: '7. Offline Use',
+                guide_7_b: 'Once the STT and summary models are downloaded, the app works fully offline — recording, transcription, summarization, and export all work without internet.',
+                guide_tip: 'Tip: Before your first official meeting, run a 30-second test recording to confirm the microphone, model, and export flow are working.',
                 contact_us: 'Contact Us',
                 storage_path_label: 'Storage path:',
                 open_storage_folder: 'Open folder',
@@ -858,6 +851,10 @@
             setConnectionStatus('disconnected');
             recordingSessionReady = false;
             isPaused = false; // 重連後讓 guard 能正確攔截殘留的 paused 狀態
+            if (_pendingStartAfterExport) {
+                _pendingStartAfterExport = false;
+                showToast('連線中斷，請重新手動匯出後再開始新會議');
+            }
         });
 
         socket.on('connect_error', () => {
@@ -924,19 +921,15 @@
             clearPartialLine();
         });
 
-        socket.on('proofread_update', (data) => {
-            updateProofread(data.index, data.proofread);
-        });
-
         socket.on('summary_start', (data) => {
             if (summaryViewMode === 'all') {
                 renderAllSummarySkeleton(); // 先顯示骨架
             }
             // 單一摘要模式：保留 requestSummary() 已設好的 loading spinner，
-            // 等第一個 summary_chunk 到達時才建立 stream div，避免呈現空白欄位
+            // 等第一個 summary_token 到達時才建立 stream div，避免呈現空白欄位
         });
 
-        socket.on('summary_chunk', (data) => {
+        socket.on('summary_token', (data) => {
             // 忽略非當前 session 發來的殘留事件（防止後台舊任務污染畫面）
             if (summaryRequestInFlight <= 0) return;
             let target;
@@ -951,7 +944,7 @@
                     }
                 }
             } else {
-                // 第一個 chunk 到達時才建立 stream div（取代 loading spinner）
+                // 第一個 token 到達時才建立 stream div（取代 loading spinner）
                 target = document.getElementById(`summary-stream-${data.mode}`);
                 if (!target) {
                     document.getElementById('summary-container').innerHTML =
@@ -959,15 +952,15 @@
                     target = document.getElementById(`summary-stream-${data.mode}`);
                 }
             }
-            
+
             if (target) {
-                target.textContent += data.chunk;
+                target.textContent += data.token;
                 const container = document.getElementById('summary-container');
                 container.scrollTop = container.scrollHeight;
             }
         });
 
-        socket.on('summary_result', (data) => {
+        socket.on('summary_done', (data) => {
             endSummaryRequest();
             // 清掉串流暫存區
             const streamDiv = document.getElementById(`summary-stream-${data.mode}`);
@@ -998,26 +991,47 @@
             showSummary(data.mode, data.content);
         });
 
-        socket.on('enhance_done', () => {
-            showToast(t('enhance_done'));
+        // 心跳：後端 LLM 推論超過 10 秒未出 token 時發送，重置前端計時器防止誤判逾時
+        socket.on('keep_alive', () => {
+            if (summaryRequestInFlight <= 0) return;
+            if (_summaryTimeoutId) clearTimeout(_summaryTimeoutId);
+            _summaryTimeoutId = setTimeout(() => {
+                if (summaryRequestInFlight > 0) {
+                    summaryRequestInFlight = 0;
+                    setTranscriptOpsLocked(false);
+                    showToast('摘要請求逾時，請重新點擊。');
+                }
+            }, 120000);
+            console.log('[Summary] keep_alive received, timeout reset');
+        });
+
+        // 摘要中途錯誤：顯示提示並立即解鎖（後端修復後不再送 summary_done）
+        socket.on('summary_error', (data) => {
+            const msg = (data && data.message) || '摘要產生中斷，請重試';
+            console.error('[Summary] 摘要中斷：', msg, 'mode:', data && data.mode);
+            endSummaryRequest();
+            setTranscriptOpsLocked(false);
+            showToast(msg);
         });
 
         socket.on('export_ready', (data) => {
             hasExportedCurrentSession = true;
+            let primaryPath = '';
             if (data.files && Array.isArray(data.files)) {
-                const firstPath = data.files[0] && data.files[0].saved_path;
-                if (firstPath) {
-                    const dirPath = toDirectoryPath(firstPath);
-                    updateStoragePathDisplay(dirPath);
-                    showToast(`已同步寫入資料夾：${dirPath}`);
-                } else {
-                    showToast('已完成匯出（僅寫入專案資料夾）');
-                }
+                const transcriptFile = data.files.find(f => f.saved_path && f.filename && f.filename.includes('transcript'));
+                primaryPath = (transcriptFile || data.files[0] || {}).saved_path || '';
+                const allPaths = data.files.map(f => f.saved_path).filter(Boolean);
+                console.log('[Export] 匯出成功，檔案：', allPaths);
             } else if (data.saved_path) {
-                const dirPath = toDirectoryPath(data.saved_path);
+                primaryPath = data.saved_path;
+                console.log('[Export] 匯出成功，檔案：', primaryPath);
+            }
+            if (primaryPath) {
+                const dirPath = toDirectoryPath(primaryPath);
                 updateStoragePathDisplay(dirPath);
-                showToast(`已同步寫入資料夾：${dirPath}`);
+                showToast(`已儲存至：${primaryPath}`);
             } else {
+                console.log('[Export] 匯出成功（無路徑資訊）');
                 showToast('已完成匯出（僅寫入專案資料夾）');
             }
             // 若是由「立即匯出後開始新會議」觸發，匯出完成後自動開始倒數
@@ -1051,6 +1065,27 @@
             _pendingStartAfterExport = false; // 匯出失敗時取消自動開始
             updateAckDiag(false, data.message || '未知錯誤');
             alert(data.message);
+        });
+
+        socket.on('export_error', (data) => {
+            const msg = (data && data.message) || '匯出失敗（未知原因）';
+            console.error('[Export] 匯出失敗：', msg);
+            _pendingStartAfterExport = false;
+            showToast(msg);
+            // 匯出失敗時重新顯示提示 modal，讓使用者選擇重試或放棄
+            const hasPrevTranscript = transcriptRawLines.length > 0;
+            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            if (hasPrevTranscript || hasPrevSummary) {
+                const items = [];
+                if (hasPrevTranscript) items.push('逐字稿');
+                if (hasPrevSummary) items.push('AI 摘要');
+                const modal = document.getElementById('unsaved-modal');
+                document.getElementById('unsaved-modal-body').textContent =
+                    `匯出失敗，${items.join('與')}尚未儲存。請重試或略過。`;
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+                lucide.createIcons();
+            }
         });
 
         // ── 主控制邏輯 ─────────────────────────────────
@@ -1261,7 +1296,33 @@
                         socket.emit('audio_recording_done');
                         mediaRecorder = null;
                     };
+                    mediaRecorder.onerror = () => {
+                        showToast('錄音發生錯誤，請檢查麥克風後重試');
+                        if (isRecording || currentState === 'recording' || currentState === 'paused') {
+                            stopRecording();
+                        }
+                    };
+                    const audioTrack = audioStream.getAudioTracks()[0];
+                    if (audioTrack) {
+                        audioTrack.onended = () => {
+                            showToast('麥克風連線中斷，錄音已停止');
+                            if (isRecording || currentState === 'recording' || currentState === 'paused') {
+                                stopRecording();
+                            }
+                        };
+                    }
                     mediaRecorder.start(1000);
+                } else {
+                    // 未開啟錄音儲存時仍需監聽麥克風拔除
+                    const audioTrackFallback = audioStream.getAudioTracks()[0];
+                    if (audioTrackFallback) {
+                        audioTrackFallback.onended = () => {
+                            showToast('麥克風連線中斷，錄音已停止');
+                            if (isRecording || currentState === 'recording' || currentState === 'paused') {
+                                stopRecording();
+                            }
+                        };
+                    }
                 }
 
                 // 立即清空上一場資料，讓使用者馬上看到乾淨畫面（不等後端 ack）
@@ -1274,12 +1335,8 @@
                 }
                 transcriptRawLines = [];
                 transcriptTimestamps = [];
-                transcriptProofreadLines = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
-                transcriptBackupState = null;
-                hasEnhancedTranscript = false;
-                setEnhanceUndoVisible(false);
                 isTranscriptEditing = false;
                 summaryCache = { full: null, key_points: null };
                 summaryCacheSourceText = '';
@@ -1468,8 +1525,14 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             }
         }
 
-        window.addEventListener('beforeunload', () => {
+        window.addEventListener('beforeunload', (e) => {
             cleanupRecordingGraph({ releaseStream: true });
+            const hasPrevTranscript = transcriptRawLines.length > 0;
+            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            if (!hasExportedCurrentSession && (hasPrevTranscript || hasPrevSummary)) {
+                e.preventDefault();
+                e.returnValue = '尚有未匯出的逐字稿或摘要，關閉後資料將會遺失。';
+            }
         });
 
         // ── UI 更新 ────────────────────────────────────
@@ -1482,8 +1545,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const saveAudioCheckbox = document.getElementById('save-audio');
             const editBtn = document.getElementById('edit-transcript-btn');
             const editDoneBtn = document.getElementById('edit-done-btn');
-            const enhanceBtn = document.getElementById('enhance-btn');
-            const enhanceUndoBtn = document.getElementById('enhance-undo-btn');
 
             switch (currentState) {
                 case 'idle':
@@ -1585,7 +1646,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         }
 
         function getMergedTranscriptLine(index) {
-            return normalizeTranscriptLine(transcriptProofreadLines[index] || transcriptRawLines[index] || '');
+            return normalizeTranscriptLine(transcriptRawLines[index] || '');
         }
 
         function findNextLineNode(index) {
@@ -1603,7 +1664,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (forceFull) {
                 const fullMax = Math.max(
                     transcriptRawLines.length,
-                    transcriptProofreadLines.length,
                     transcriptLineNodes.length
                 );
                 for (let i = 0; i < fullMax; i++) {
@@ -1646,11 +1706,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 }
             }
 
-            if (div && transcriptProofreadLines.some(Boolean)) {
-                div.classList.add('proofread-updated');
-            } else if (div) {
-                div.classList.remove('proofread-updated');
-            }
             container.scrollTop = container.scrollHeight;
         }
 
@@ -1680,24 +1735,9 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             scheduleTranscriptRender();
         }
 
-        function setEnhanceUndoVisible(isVisible) {
-            const undoBtn = document.getElementById('enhance-undo-btn');
-            if (!undoBtn) return;
-            if (isVisible) {
-                undoBtn.classList.remove('hidden');
-            } else {
-                undoBtn.classList.add('hidden');
-            }
-            if (!undoBtn.classList.contains('hidden')) {
-                undoBtn.disabled = transcriptOpsLockedBySummary;
-                undoBtn.classList.toggle('opacity-50', transcriptOpsLockedBySummary);
-                undoBtn.classList.toggle('cursor-not-allowed', transcriptOpsLockedBySummary);
-            }
-        }
-
         function setTranscriptOpsLocked(locked) {
             transcriptOpsLockedBySummary = Boolean(locked);
-            ['edit-transcript-btn', 'edit-done-btn', 'enhance-btn', 'enhance-undo-btn'].forEach((id) => {
+            ['edit-transcript-btn', 'edit-done-btn'].forEach((id) => {
                 const btn = document.getElementById(id);
                 if (!btn || btn.classList.contains('hidden')) return;
                 btn.disabled = transcriptOpsLockedBySummary;
@@ -1771,7 +1811,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (!linesRoot) return;
             const oldMax = Math.max(
                 transcriptRawLines.length,
-                transcriptProofreadLines.length,
                 transcriptLineNodes.length
             );
             const editedLines = (linesRoot.innerText || '')
@@ -1779,7 +1818,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 .map((line) => normalizeTranscriptLine(line))
                 .filter(Boolean);
             transcriptRawLines = editedLines.slice();
-            transcriptProofreadLines = [];
             transcriptLineNodes = [];
             transcriptDirtyIndices = new Set();
             const nextMax = Math.max(oldMax, editedLines.length);
@@ -1795,16 +1833,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             renderTranscriptFromLines();
         }
 
-        function updateProofread(index, proofread) {
-            if (!proofread) return;
-            const cleaned = normalizeTranscriptLine(proofread);
-            if (!cleaned) return;
-            const parsedIndex = Number(index);
-            const i = Number.isInteger(parsedIndex) && parsedIndex >= 0 ? parsedIndex : transcriptProofreadLines.length;
-            transcriptProofreadLines[i] = cleaned;
-            transcriptDirtyIndices.add(i);
-            scheduleTranscriptRender();
-        }
 
         function showPartialLine(timestamp, text) {
             const container = document.getElementById('transcript-container');
@@ -1947,7 +1975,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 const linesRoot = document.getElementById('transcript-lines');
                 return normalizeTranscriptLine(linesRoot ? linesRoot.innerText : '');
             }
-            const maxLen = Math.max(transcriptRawLines.length, transcriptProofreadLines.length);
+            const maxLen = transcriptRawLines.length;
             const merged = [];
             for (let i = 0; i < maxLen; i++) {
                 const line = getMergedTranscriptLine(i);
@@ -2156,13 +2184,21 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 _pendingStartAfterExport = false;
                 return;
             }
-            showToast('正在匯出，請稍候...');
-            // 優化：傳送已經快取在前端的摘要內容，避免後端重複推論
+            const hasSummary = !!(summaryCache.full || summaryCache.key_points || summaryCache.all);
+            if (!hasSummary) {
+                showToast('將只匯出逐字稿，如需摘要請先點擊摘要按鈕');
+            } else {
+                showToast('匯出中...');
+            }
+            console.log('[Export] 開始匯出，hasSummary:', hasSummary, 'meeting:', meetingName);
+            // 傳送已快取的摘要內容；無摘要時傳空字串，後端只寫逐字稿
+            // 各模式分別傳送，後端依內容決定寫入哪些檔案
             socket.emit('export_meeting', {
                 meeting_name: meetingName,
                 transcript_override: transcriptText,
-                summary_full: summaryCache.full,
-                summary_key: summaryCache.key_points,
+                summary_full: summaryCache.full || '',
+                summary_key: summaryCache.key_points || '',
+                summary_all: summaryCache.all || '',
             });
         }
 
@@ -2200,48 +2236,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             });
         }
 
-        function enhanceTranscript() {
-            if (guardTranscriptOpsLocked()) return;
-            if (currentState !== 'idle') {
-                showToast(t('alert_edit_blocked'));
-                return;
-            }
-            if (!hasEnhancedTranscript) {
-                transcriptBackupState = {
-                    raw: transcriptRawLines.slice(),
-                    proofread: transcriptProofreadLines.slice(),
-                };
-            }
-            hasEnhancedTranscript = true;
-            setEnhanceUndoVisible(true);
-            showToast(t('enhance_started'));
-            socket.emit('enhance_transcript');
-        }
-
-        function undoEnhance() {
-            if (guardTranscriptOpsLocked()) return;
-            if (currentState !== 'idle') {
-                showToast(t('alert_edit_blocked'));
-                return;
-            }
-            if (!transcriptBackupState) return;
-            transcriptRawLines = transcriptBackupState.raw.slice();
-            transcriptProofreadLines = transcriptBackupState.proofread.slice();
-            transcriptLineNodes = [];
-            transcriptDirtyIndices = new Set();
-            const maxLen = Math.max(transcriptRawLines.length, transcriptProofreadLines.length);
-            for (let i = 0; i < maxLen; i++) {
-                transcriptDirtyIndices.add(i);
-            }
-            const linesRoot = document.getElementById('transcript-lines');
-            if (linesRoot) {
-                linesRoot.innerHTML = '';
-            }
-            renderTranscriptFromLines();
-            hasEnhancedTranscript = false;
-            transcriptBackupState = null;
-            setEnhanceUndoVisible(false);
-        }
 
         let toastTimer = null;
         function showToast(message) {
@@ -2361,61 +2355,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         applyI18n();
 
-        // ── 詞彙修正設定 ────────────────────────────────
-        socket.on('corrections_list', (data) => {
-            const list = data.corrections || [];
-            const table = document.getElementById('corrections-table');
-            if (!table) return;
-            if (list.length === 0) {
-                table.innerHTML = '<p class="text-sm text-slate-400 text-center py-4">尚無自訂詞彙</p>';
-                return;
-            }
-            table.innerHTML = list.map(c => `
-                <div class="flex items-center gap-2 bg-slate-50 rounded-lg px-3 py-2">
-                    <span class="flex-1 text-sm text-slate-700">${c.from}</span>
-                    <span class="text-slate-400 text-sm">→</span>
-                    <span class="flex-1 text-sm font-medium text-slate-900">${c.to}</span>
-                    <button onclick="deleteCorrection('${c.from.replace(/'/g, "\\'")}')" class="text-slate-400 hover:text-red-500 ml-1">
-                        <i data-lucide="trash-2" class="w-4 h-4"></i>
-                    </button>
-                </div>
-            `).join('');
-            lucide.createIcons();
-        });
-
-        socket.on('corrections_error', (data) => {
-            const el = document.getElementById('corrections-error');
-            if (el) { el.textContent = data.message; el.classList.remove('hidden'); }
-        });
-
-        function openCorrectionsModal() {
-            document.getElementById('corrections-modal').classList.remove('hidden');
-            const err = document.getElementById('corrections-error');
-            if (err) err.classList.add('hidden');
-            socket.emit('get_corrections');
-        }
-
-        function closeCorrectionsModal() {
-            document.getElementById('corrections-modal').classList.add('hidden');
-        }
-
-        function addCorrection() {
-            const from = document.getElementById('correction-from').value.trim();
-            const to = document.getElementById('correction-to').value.trim();
-            const err = document.getElementById('corrections-error');
-            if (err) err.classList.add('hidden');
-            if (!from || !to) {
-                if (err) { err.textContent = '來源詞與正確詞不可為空'; err.classList.remove('hidden'); }
-                return;
-            }
-            socket.emit('add_correction', { from, to });
-            document.getElementById('correction-from').value = '';
-            document.getElementById('correction-to').value = '';
-        }
-
-        function deleteCorrection(from) {
-            socket.emit('delete_correction', { from });
-        }
     </script>
 </body>
 </html>
