@@ -479,10 +479,21 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
 
 app.whenReady().then(createWindow);
 
+// 強制終止後端子程序（不等待 LLM 推理完成）
+function killBackend() {
+  if (!backendProcess) return;
+  const proc = backendProcess;
+  backendProcess = null;
+  try { proc.kill("SIGTERM"); } catch (_) {}
+  // 500ms 後強制 SIGKILL，確保 LLM 推理中也能立即退出
+  setTimeout(() => {
+    try { proc.kill("SIGKILL"); } catch (_) {}
+  }, 500);
+}
+
+app.on("before-quit", killBackend);
+
 app.on("window-all-closed", () => {
-  if (backendProcess) {
-    backendProcess.kill("SIGTERM");
-    setTimeout(() => { if (backendProcess) backendProcess.kill("SIGKILL"); }, 3000);
-  }
+  killBackend();
   app.quit();
 });

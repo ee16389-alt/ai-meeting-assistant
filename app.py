@@ -2,6 +2,7 @@
 
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -522,6 +523,20 @@ _summary_cancelled_lock = threading.Lock()
 def _is_summary_cancelled() -> bool:
     with _summary_cancelled_lock:
         return _summary_cancelled
+
+
+def _handle_shutdown_signal(signum, frame):
+    """收到 SIGTERM / SIGINT 時設定取消旗標，讓進行中的推理盡快停止，再正常退出。"""
+    global _summary_cancelled
+    print(f"[App] 收到關閉信號 {signum}，設定取消旗標並退出", flush=True)
+    with _summary_cancelled_lock:
+        _summary_cancelled = True
+    # 給 0.5 秒讓推理迴圈偵測到旗標後中止，再強制退出
+    threading.Timer(0.5, lambda: os._exit(0)).start()
+
+
+signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+signal.signal(signal.SIGINT, _handle_shutdown_signal)
 
 
 def _finish_transcription(sid: str, token: str):

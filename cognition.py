@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import re
@@ -227,6 +228,21 @@ def _load_local_llm():
         print(f"[LLM] 第二次載入失敗：{e2}", flush=True)
         _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 載入失敗: {e2}"
         return None
+
+
+def _release_local_llm():
+    """程序退出時釋放 Llama 物件，避免殘留記憶體或 GPU context。"""
+    global _LOCAL_LLM
+    llm = _LOCAL_LLM
+    _LOCAL_LLM = None
+    if llm is not None:
+        try:
+            llm.close()
+        except Exception:
+            pass
+
+
+atexit.register(_release_local_llm)
 
 
 def _is_looping(text: str) -> bool:
