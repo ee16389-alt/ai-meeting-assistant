@@ -189,9 +189,9 @@ def _load_local_llm():
         _LOCAL_LLM_LOAD_ERROR = "找不到 GGUF 模型檔"
         return None
 
-    # 第一次嘗試：完整參數（關閉進階指令集相關選項）
+    # 第一次嘗試：完整參數
     try:
-        print(f"[LLM] 嘗試載入模型（完整參數）: {gguf_path}", flush=True)
+        print(f"[LLM] 嘗試載入模型（第1次，完整參數）: {gguf_path}", flush=True)
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
@@ -204,29 +204,46 @@ def _load_local_llm():
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
-        print("[LLM] 模型載入成功（完整參數）", flush=True)
+        print("[LLM] 模型載入成功（第1次，完整參數）", flush=True)
         return _LOCAL_LLM
-    except Exception as e:
-        print(f"[LLM] 第一次載入失敗：{e}", flush=True)
-        print("[LLM] 嘗試最小化參數重試（移除 n_threads_batch）...", flush=True)
+    except Exception as e1:
+        print(f"[LLM] 第1次載入失敗：{type(e1).__name__}: {e1}", flush=True)
 
-    # 第二次嘗試：移除可能觸發進階指令集的參數
+    # 第二次嘗試：移除 n_threads_batch，n_batch 縮小，強制純 CPU
     try:
+        print("[LLM] 嘗試載入模型（第2次，移除 n_threads_batch，n_gpu_layers=0）", flush=True)
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
             n_threads=int(os.environ.get("AMA_LLM_THREADS", "4")),
-            n_batch=int(os.environ.get("AMA_LLM_BATCH", "256")),
+            n_batch=128,
+            n_gpu_layers=0,
             use_mmap=True,
             use_mlock=False,
             verbose=False,
         )
         _LOCAL_LLM_LOAD_ERROR = None
-        print("[LLM] 模型載入成功（最小化參數）", flush=True)
+        print("[LLM] 模型載入成功（第2次）", flush=True)
         return _LOCAL_LLM
     except Exception as e2:
-        print(f"[LLM] 第二次載入失敗：{e2}", flush=True)
-        _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 載入失敗: {e2}"
+        print(f"[LLM] 第2次載入失敗：{type(e2).__name__}: {e2}", flush=True)
+
+    # 第三次嘗試：最保守參數，僅保留必要項目
+    try:
+        print("[LLM] 嘗試載入模型（第3次，最保守參數）", flush=True)
+        _LOCAL_LLM = Llama(
+            model_path=str(gguf_path),
+            n_ctx=2048,
+            n_threads=2,
+            n_gpu_layers=0,
+            verbose=False,
+        )
+        _LOCAL_LLM_LOAD_ERROR = None
+        print("[LLM] 模型載入成功（第3次，最保守參數）", flush=True)
+        return _LOCAL_LLM
+    except Exception as e3:
+        print(f"[LLM] 第3次載入失敗：{type(e3).__name__}: {e3}", flush=True)
+        _LOCAL_LLM_LOAD_ERROR = f"本地 GGUF 三次嘗試均失敗，最後錯誤: {e3}"
         return None
 
 
