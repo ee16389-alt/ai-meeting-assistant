@@ -235,7 +235,7 @@
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-3">
-                        <button id="main-btn" onclick="mainAction()" class="flex items-center gap-2 text-white px-8 py-3 text-lg pill transition-all primary-cta">
+                        <button id="main-btn" onclick="mainAction()" class="flex items-center justify-center gap-2 text-white px-8 py-3 text-lg pill transition-all primary-cta">
                             <i data-lucide="mic" class="w-4 h-4"></i> <span id="main-btn-text" data-i18n="start_meeting">開始會議</span>
                         </button>
                         <button id="stop-btn" onclick="stopRecording()" class="hidden flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-8 py-3 text-lg pill transition-all border border-red-600/20 secondary-cta">
@@ -1570,19 +1570,19 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             switch (currentState) {
                 case 'idle':
                     btn.innerHTML = `<i data-lucide="mic" class="w-4 h-4"></i> <span>${t('start_meeting')}</span>`;
-                    btn.className = 'flex items-center gap-2 text-white px-8 py-3 text-lg rounded-xl transition-all primary-cta';
+                    btn.className = 'flex items-center justify-center gap-2 text-white px-8 py-3 text-lg rounded-xl transition-all primary-cta';
                     stopBtn.classList.add('hidden');
                     break;
 
                 case 'recording':
                     btn.innerHTML = `<i data-lucide="pause" class="w-4 h-4"></i> <span>${t('pause')}</span>`;
-                    btn.className = 'flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-emerald-500/30';
+                    btn.className = 'flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-emerald-500/30';
                     stopBtn.classList.remove('hidden');
                     break;
 
                 case 'paused':
                     btn.innerHTML = `<i data-lucide="play" class="w-4 h-4"></i> <span>${t('resume')}</span>`;
-                    btn.className = 'flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-amber-400/30';
+                    btn.className = 'flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-400 text-slate-900 px-8 py-3 text-lg rounded-xl transition-all shadow-lg shadow-amber-400/30';
                     stopBtn.classList.remove('hidden');
                     break;
 
