@@ -154,7 +154,7 @@ def _find_sherpa_model_dir() -> Path | None:
 
 class STTEngine:
     SAMPLE_RATE = 16000
-    SILENCE_THRESHOLD = 0.008  # VAD 靜音門檻（RMS）
+    SILENCE_THRESHOLD = 0.003  # VAD 靜音門檻（RMS）
     CHUNK_SAMPLES = 480         # 30ms @ 16kHz
 
     def __init__(self, model_size: str = "base"):
@@ -281,12 +281,24 @@ class STTEngine:
             self._state = State.IDLE
             stream = self._stream
             self._pending_flush_stream = stream  # 交給 background task 執行 flush
-        # 先清空 queue，避免 worker 執行緒繼續用舊 stream
+        # 把 queue 中殘留的音訊 chunk 直接送入 stream，讓 _flush_stream 能解碼最後一段語音
+        # （不直接丟棄，避免錄音結束前最後幾秒的語音遺失）
+        drained = 0
         while not self._audio_queue.empty():
             try:
-                self._audio_queue.get_nowait()
+                chunk = self._audio_queue.get_nowait()
+                drained += 1
+                try:
+                    pcm16 = np.frombuffer(chunk, dtype=np.int16)
+                    if pcm16.size > 0:
+                        samples = pcm16.astype(np.float32) / 32768.0
+                        stream.accept_waveform(self.SAMPLE_RATE, samples)
+                except Exception as e:
+                    print(f"[STT] request_stop drain 例外: {e}", flush=True)
             except queue.Empty:
                 break
+        if drained:
+            print(f"[STT] request_stop: fed {drained} queued chunk(s) to stream before flush", flush=True)
         # _flush_stream 移到 background task，此處不再阻塞 event handler
 
     def take_pending_flush_stream(self):

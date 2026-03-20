@@ -286,7 +286,7 @@ def _is_looping(text: str) -> bool:
     return False
 
 
-_LLM_STREAM_TIMEOUT = 120  # 單次串流最長允許時間（秒）
+_LLM_STREAM_TIMEOUT = 360  # 單次串流最長允許時間（秒），需大於 app.py 的 _FINAL_TIMEOUT=300
 
 
 def _call_model_stream(system_prompt: str, user_prompt: str, max_tokens: int | None = None):

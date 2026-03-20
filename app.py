@@ -179,6 +179,21 @@ def _init_stt_background():
 
 threading.Thread(target=_init_stt_background, daemon=True).start()
 
+
+def _warmup_llm():
+    """背景預熱 LLM：用極短 prompt 觸發一次推理，讓模型載入到記憶體。"""
+    try:
+        from cognition import _call_model_stream
+        print("[LLM] 開始模型預熱...", flush=True)
+        for _ in _call_model_stream("你是助理。", "你好", max_tokens=1):
+            pass
+        print("[LLM] 模型預熱完成，推理就緒", flush=True)
+    except Exception as e:
+        print(f"[LLM] 模型預熱失敗（不影響正常功能）: {e}", flush=True)
+
+
+threading.Thread(target=_warmup_llm, daemon=True).start()
+
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
 _transcript_lock = threading.Lock()
@@ -700,7 +715,7 @@ def _generate_summary(mode: str, full_text: str, sid: str):
         flush=True,
     )
 
-    # ── 動態 max_tokens（full 模式依逐字稿長度調整）──────
+    # ── 動態 max_tokens（依模式與逐字稿長度調整，避免長文本超時）──────
     if mode == "full":
         if char_count <= 500:
             final_max_tokens = 128
@@ -708,9 +723,23 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             final_max_tokens = 256
         else:
             final_max_tokens = 384
-        print(f"[Summary] full mode max_tokens={final_max_tokens}（逐字稿 {char_count} 字）", flush=True)
+    elif mode == "key_points":
+        if char_count <= 500:
+            final_max_tokens = 256
+        elif char_count <= 1500:
+            final_max_tokens = 384
+        else:
+            final_max_tokens = 512
+    elif mode == "all":
+        if char_count <= 500:
+            final_max_tokens = 384
+        elif char_count <= 1500:
+            final_max_tokens = 512
+        else:
+            final_max_tokens = 640
     else:
-        final_max_tokens = None  # 其他 mode 沿用 AMA_LLM_MAX_TOKENS 預設值
+        final_max_tokens = int(os.environ.get("AMA_LLM_MAX_TOKENS", "512"))
+    print(f"[Summary] {mode} mode max_tokens={final_max_tokens}（逐字稿 {char_count} 字）", flush=True)
 
     # 告訴前端準備開始串流
     socketio.emit("summary_start", {"mode": mode}, room=sid)
@@ -747,7 +776,7 @@ def _generate_summary(mode: str, full_text: str, sid: str):
         + full_text
         + "\n--- 內容結束 ---"
     )
-    _FINAL_TIMEOUT = 120.0
+    _FINAL_TIMEOUT = 300.0
     accumulated = ""
     last_token_time = time.time()
     t_final = time.time()
@@ -778,16 +807,18 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             print(f"[Summary] 最終推理已取消", flush=True)
             socketio.emit("summary_error", {"mode": mode, "message": "摘要已取消"}, room=sid)
             return
+        # 無 token 超過 10s 時發送 keep_alive，防止前端連線逾時（含等待第一個 token 的期間）
+        now = time.time()
+        if now - last_token_time >= 10:
+            socketio.emit("keep_alive", {"mode": mode}, room=sid)
+            print(f"[Summary] keep_alive sent (gap: {now - last_token_time:.1f}s)", flush=True)
+            last_token_time = now
         # 取出已累積的 tokens 並串流
         while final_result["tokens"]:
             chunk = final_result["tokens"].pop(0)
-            now = time.time()
-            if now - last_token_time >= 10:
-                socketio.emit("keep_alive", {"mode": mode}, room=sid)
-                print(f"[Summary] keep_alive sent (gap: {now - last_token_time:.1f}s)", flush=True)
             accumulated += chunk
             socketio.emit("summary_token", {"mode": mode, "token": _to_traditional(chunk)}, room=sid)
-            last_token_time = now
+            last_token_time = time.time()
         final_done.wait(timeout=0.05)
 
     # 執行緒結束後清空剩餘 token buffer
