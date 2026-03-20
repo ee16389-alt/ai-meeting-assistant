@@ -460,14 +460,32 @@ class STTEngine:
         return []
 
     def _flush_stream(self, stream) -> None:
-        """送入 tail padding，刷出最後未送出的辨識結果"""
+        """送入 tail padding，強制刷出最後未送出的辨識結果。
+
+        步驟：
+        1. 送入 2.5s 靜音，確保 Paraformer encoder right_context 完整解碼
+        2. 解碼所有 ready 的 chunk
+        3. 嘗試 finalize_decoding()（並非所有版本支援，用 try/except 保護）
+        4. 再次解碼 + 取結果，確保最後一句話不被丟棄
+        """
         try:
-            tail = np.zeros(int(1.0 * self.SAMPLE_RATE), dtype=np.float32)
+            # 2.5s padding 比錄音期間 _process_window 用的 1.5s 更長，確保 right_context 刷出
+            tail = np.zeros(int(2.5 * self.SAMPLE_RATE), dtype=np.float32)
             stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
+
+            # finalize_decoding：強制輸出 encoder buffer 中殘留的結果（非所有版本支援）
+            try:
+                self._recognizer.finalize_decoding(stream)
+                while self._recognizer.is_ready(stream):
+                    self._recognizer.decode_stream(stream)
+            except Exception:
+                pass  # API 不支援則忽略，已有足夠 padding
+
             result = self._recognizer.get_result(stream)
             text = (result.text if hasattr(result, "text") else str(result)).strip()
+            print(f"[STT] _flush_stream: final_text={repr(text[:60]) if text else '(empty)'}", flush=True)
             if text:
                 self._emit_text(text)
         except Exception as e:

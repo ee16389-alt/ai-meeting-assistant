@@ -1818,9 +1818,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 transcriptRawLines.length,
                 transcriptLineNodes.length
             );
+            // innerText 會把 <span>時間戳</span><span>文字</span> 串接成 "HH:MM:SS文字"
+            // 需去除行首的 HH:MM:SS 前綴，避免時間戳重複顯示且混入摘要/匯出內容
+            const TS_PREFIX = /^\d{2}:\d{2}:\d{2}\s*/;
             const editedLines = (linesRoot.innerText || '')
                 .split(/\n+/)
-                .map((line) => normalizeTranscriptLine(line))
+                .map((line) => normalizeTranscriptLine(line.replace(TS_PREFIX, '')))
                 .filter(Boolean);
             transcriptRawLines = editedLines.slice();
             transcriptLineNodes = [];
