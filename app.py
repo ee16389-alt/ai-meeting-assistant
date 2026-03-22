@@ -136,7 +136,7 @@ def _make_stt_callback(session_sid: str, session_token: str):
                 line = {
                     "index": len(transcript_lines),
                     "text": seg["text"],
-                    "timestamp": time.strftime("%H:%M:%S"),
+                    "timestamp": _elapsed_ts(_recording_start_time),
                     "language": seg.get("language", ""),
                     "token": session_token,
                 }
@@ -199,6 +199,17 @@ _transcript_lock = threading.Lock()
 audio_chunk_count = 0
 _active_sid: str = ""  # 目前錄音的 client session id
 _recording_token: str = ""  # 每次錄音生成的唯一 token，前端用來過濾舊事件
+_recording_start_time: float = 0.0  # 本場錄音開始的 time.time()，用於計算經過時間戳記
+
+
+def _elapsed_ts(start: float) -> str:
+    """將 time.time() - start 換算成 HH:MM:SS 經過時間格式。"""
+    elapsed = max(0.0, time.time() - start) if start else 0.0
+    total_s = int(elapsed)
+    h = total_s // 3600
+    m = (total_s % 3600) // 60
+    s = total_s % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 audio_save_enabled = False
 audio_file_handle = None
 current_meeting_name = ""
@@ -294,9 +305,10 @@ def handle_connect():
 
 @socketio.on("start_recording")
 def handle_start(data=None):
-    global transcript_lines, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token
+    global transcript_lines, audio_save_enabled, audio_file_handle, current_meeting_name, audio_chunk_count, _active_sid, _recording_token, _recording_start_time
     _active_sid = request.sid
     _recording_token = uuid.uuid4().hex  # 每場錄音唯一 token
+    _recording_start_time = time.time()  # 記錄本場錄音開始時間
     # 重新綁定 STT callback，讓 closure 鎖定本場 sid 與 token
     if stt:
         stt.reset()  # 確保 STT 狀態從乾淨狀態開始，清除上場殘留 buffer

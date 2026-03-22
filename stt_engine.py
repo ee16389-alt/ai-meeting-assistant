@@ -571,11 +571,10 @@ class STTEngine:
             text = (result.text if hasattr(result, "text") else str(result)).strip()
             print(f"[STT] 第一次 get_result: {repr(text[:60]) if text else '(empty)'}，耗時 {(time.monotonic()-t3)*1000:.0f}ms", flush=True)
 
-            # ── 步驟 4：若無結果，補 1.0s silence padding 再試一次 ──
+            # ── 步驟 4：若無結果，補 2.0s silence padding 再試一次 ──
             if not text:
                 t4 = time.monotonic()
-                # 1.0s 已足夠覆蓋 Paraformer right_context（≈160ms），不需要 2.5s
-                tail = np.zeros(int(1.0 * self.SAMPLE_RATE), dtype=np.float32)
+                tail = np.zeros(int(2.0 * self.SAMPLE_RATE), dtype=np.float32)
                 stream.accept_waveform(self.SAMPLE_RATE, tail)
                 n_pad_decode = 0
                 while self._recognizer.is_ready(stream):
