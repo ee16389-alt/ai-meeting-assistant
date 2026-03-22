@@ -2,7 +2,7 @@
   "versionLabel": "phi-4-mini-q4_k_m",
   "ggufFilename": "Phi-4-mini-instruct-Q4_K_M.gguf",
   "ggufDownloadUrl": "https://huggingface.co/lmstudio-community/Phi-4-mini-instruct-GGUF/resolve/main/Phi-4-mini-instruct-Q4_K_M.gguf",
-  "sherpaModelDirName": "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20",
-  "sherpaZipDownloadUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20.tar.bz2",
+  "sherpaModelDirName": "sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30",
+  "sherpaZipDownloadUrl": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-zh-int8-2025-06-30.tar.bz2",
   "installerFilename": "AI-Meeting-Assistant-Model-Pack-phi-4-mini-q4_k_m-Setup.exe"
 }
