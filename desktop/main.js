@@ -447,7 +447,7 @@ async function createWindow() {
     width: 1280, height: 800,
     backgroundColor: "#fff8f3",
     show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, preload: path.join(__dirname, 'preload.js') },
   });
 
   mainWin.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(`<!DOCTYPE html>
@@ -490,6 +490,28 @@ function killBackend() {
     try { proc.kill("SIGKILL"); } catch (_) {}
   }, 500);
 }
+
+// ── 草稿 IPC ───────────────────────────────────────────
+function draftFilePath() {
+  return path.join(app.getPath("userData"), "draft.json");
+}
+
+ipcMain.handle("draft:save", async (_event, data) => {
+  try { fs.writeFileSync(draftFilePath(), JSON.stringify(data), "utf8"); return true; } catch (_) { return false; }
+});
+
+ipcMain.handle("draft:load", async () => {
+  try {
+    const p = draftFilePath();
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
+  } catch (_) {}
+  return null;
+});
+
+ipcMain.handle("draft:clear", async () => {
+  try { const p = draftFilePath(); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+  return true;
+});
 
 app.on("before-quit", killBackend);
 

@@ -70,6 +70,8 @@
         .panel-header {
             height: 96px;
         }
+        mark.search-hl { background: #fef08a; border-radius: 2px; padding: 0 1px; }
+        mark.search-hl-active { background: #fb923c; color: #fff; border-radius: 2px; padding: 0 1px; }
         .panel-body {
             height: calc(600px - 96px);
         }
@@ -246,6 +248,7 @@
                         <button id="stop-btn" onclick="stopRecording()" class="hidden flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-8 py-3 text-lg pill transition-all border border-red-600/20 secondary-cta">
                             <i data-lucide="square" class="w-5 h-5"></i> <span data-i18n="stop">停止</span>
                         </button>
+                        <span id="recording-timer" class="hidden font-mono text-red-500 font-semibold text-sm tabular-nums bg-red-50 border border-red-200 px-2.5 py-1.5 rounded-lg">00:00</span>
                     </div>
                 </div>
 
@@ -285,6 +288,9 @@
                         <h2 class="font-bold text-slate-900 text-[28px] leading-tight" data-i18n="transcript_title">即時逐字稿</h2>
                     </div>
                     <div class="flex items-center gap-2 flex-nowrap">
+                        <button id="search-toggle-btn" onclick="toggleTranscriptSearch()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                            <i data-lucide="search" class="w-4 h-4 text-orange-500"></i> <span data-i18n="search">搜尋</span>
+                        </button>
                         <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
                             <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span>編輯全文</span>
                         </button>
@@ -292,6 +298,15 @@
                             <i data-lucide="download" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
                         </button>
                     </div>
+                </div>
+                <!-- 搜尋列 -->
+                <div id="transcript-search-bar" class="hidden px-3 py-1.5 border-b border-slate-100 bg-slate-50 flex items-center gap-1.5 flex-shrink-0">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
+                    <input id="transcript-search-input" type="text" data-i18n-placeholder="search_placeholder" placeholder="搜尋關鍵字..." class="flex-1 text-sm bg-transparent outline-none text-slate-700 placeholder:text-slate-400 min-w-0" oninput="doTranscriptSearch()">
+                    <span id="search-counter" class="text-xs text-slate-400 font-mono flex-shrink-0 whitespace-nowrap"></span>
+                    <button onclick="searchPrev()" class="p-1 text-slate-400 hover:text-slate-700 flex-shrink-0" title="上一個"><i data-lucide="chevron-up" class="w-3.5 h-3.5"></i></button>
+                    <button onclick="searchNext()" class="p-1 text-slate-400 hover:text-slate-700 flex-shrink-0" title="下一個"><i data-lucide="chevron-down" class="w-3.5 h-3.5"></i></button>
+                    <button onclick="closeTranscriptSearch()" class="p-1 text-slate-400 hover:text-slate-700 flex-shrink-0"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
                 </div>
                 <div id="transcript-container" class="flex-1 overflow-y-auto p-6 space-y-3 panel-body">
                     <div id="empty-state" class="h-full flex flex-col items-center justify-center text-slate-400">
@@ -337,6 +352,10 @@
                             <i data-lucide="file-down" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_summary">匯出摘要</span>
                         </button>
                     </div>
+                </div>
+                <!-- 字數提示：有逐字稿內容且尚未生成摘要時顯示 -->
+                <div id="word-count-row" style="display:none; padding:4px 20px; background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                    <span id="word-count-text" class="text-xs text-slate-500"></span>
                 </div>
                 <!-- 摘要進度列 + 取消按鈕：位於 header 與內容區之間，生成中才顯示 -->
                 <div id="summary-progress-row" style="display:none; flex-direction:column; gap:4px; padding:6px 20px 8px; background:#fff7ed; border-bottom:1px solid #fed7aa;">
@@ -535,6 +554,15 @@
         let diagAckChunks = 0;
         let diagAckErrors = 0;
         let diagTranscriptLines = 0;
+        // 錄音計時器
+        let _recTimerInterval = null;
+        let _recTimerStart = 0;
+        // 搜尋
+        let _searchMatches = [];
+        let _searchIndex = -1;
+        let _searchActive = false;
+        // 草稿
+        let _autosaveInterval = null;
 
         const I18N = {
             zh: {
@@ -618,6 +646,13 @@
                 toast_model_switched: '模型已切換：{model}',
                 toast_transcript_processing: '逐字稿處理中，請稍候...',
                 model_unready: ' (未就緒)',
+                search: '搜尋',
+                search_placeholder: '搜尋關鍵字...',
+                search_result: '第 {cur} / 共 {total} 個',
+                search_no_result: '無結果',
+                word_count_hint: '逐字稿共 {n} 字',
+                draft_restore_prompt: '發現上次未儲存的會議記錄，是否還原？',
+                draft_restore_toast: '已還原上次會議記錄',
             },
             en: {
                 app_title: 'AI Meeting Assistant',
@@ -700,6 +735,13 @@
                 toast_model_switched: 'Model switched: {model}',
                 toast_transcript_processing: 'Transcript processing, please wait...',
                 model_unready: ' (Unavailable)',
+                search: 'Search',
+                search_placeholder: 'Search keyword...',
+                search_result: '{cur} / {total}',
+                search_no_result: 'No results',
+                word_count_hint: 'Transcript: {n} chars',
+                draft_restore_prompt: 'Found unsaved meeting notes from last session. Restore?',
+                draft_restore_toast: 'Previous meeting notes restored',
             },
         };
 
@@ -722,6 +764,184 @@
             const sub = document.getElementById(`${id}-sub`);
             if (main) main.textContent = value;
             if (sub && typeof subValue === 'string') sub.textContent = subValue;
+        }
+
+        // ── 錄音計時器 ──────────────────────────────────
+        function startRecordingTimer() {
+            _recTimerStart = Date.now();
+            _tickRecordingTimer();
+            _recTimerInterval = setInterval(_tickRecordingTimer, 1000);
+        }
+        function _tickRecordingTimer() {
+            const el = document.getElementById('recording-timer');
+            if (!el) return;
+            const s = Math.floor((Date.now() - _recTimerStart) / 1000);
+            const mm = String(Math.floor(s / 60)).padStart(2, '0');
+            const ss = String(s % 60).padStart(2, '0');
+            el.textContent = `${mm}:${ss}`;
+            el.classList.remove('hidden');
+        }
+        function stopRecordingTimer() {
+            clearInterval(_recTimerInterval);
+            _recTimerInterval = null;
+            const el = document.getElementById('recording-timer');
+            if (el) el.classList.add('hidden');
+        }
+        function resetRecordingTimer() {
+            stopRecordingTimer();
+            const el = document.getElementById('recording-timer');
+            if (el) el.textContent = '00:00';
+        }
+
+        // ── 逐字稿字數 ──────────────────────────────────
+        function updateWordCount() {
+            const row = document.getElementById('word-count-row');
+            const el = document.getElementById('word-count-text');
+            if (!row || !el) return;
+            const total = transcriptRawLines.join('').replace(/\s/g, '').length;
+            if (total === 0) {
+                row.style.display = 'none';
+            } else {
+                el.textContent = tFormat('word_count_hint', { n: total.toLocaleString() });
+                row.style.display = 'block';
+            }
+        }
+
+        // ── 逐字稿搜尋 ──────────────────────────────────
+        function toggleTranscriptSearch() {
+            if (_searchActive) {
+                closeTranscriptSearch();
+            } else {
+                _searchActive = true;
+                const bar = document.getElementById('transcript-search-bar');
+                bar.classList.remove('hidden');
+                lucide.createIcons();
+                document.getElementById('transcript-search-input').focus();
+            }
+        }
+        function closeTranscriptSearch() {
+            _searchActive = false;
+            _clearSearchHighlights();
+            _searchMatches = [];
+            _searchIndex = -1;
+            const bar = document.getElementById('transcript-search-bar');
+            bar.classList.add('hidden');
+            const inp = document.getElementById('transcript-search-input');
+            if (inp) inp.value = '';
+            _updateSearchCounter();
+        }
+        function _clearSearchHighlights() {
+            document.querySelectorAll('#transcript-lines mark.search-hl').forEach(m => {
+                m.replaceWith(document.createTextNode(m.textContent));
+            });
+        }
+        function doTranscriptSearch() {
+            _clearSearchHighlights();
+            _searchMatches = [];
+            _searchIndex = -1;
+            const q = (document.getElementById('transcript-search-input').value || '').trim();
+            if (!q) { _updateSearchCounter(); return; }
+            const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+            document.querySelectorAll('#transcript-lines span.text-slate-900').forEach(span => {
+                // 對 text node 逐一替換，避免破壞已有 html 結構
+                const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT);
+                const nodes = [];
+                let node;
+                while ((node = walker.nextNode())) nodes.push(node);
+                nodes.forEach(tn => {
+                    if (!re.test(tn.nodeValue)) { re.lastIndex = 0; return; }
+                    re.lastIndex = 0;
+                    const frag = document.createDocumentFragment();
+                    let last = 0, m;
+                    while ((m = re.exec(tn.nodeValue)) !== null) {
+                        if (m.index > last) frag.appendChild(document.createTextNode(tn.nodeValue.slice(last, m.index)));
+                        const mark = document.createElement('mark');
+                        mark.className = 'search-hl';
+                        mark.textContent = m[0];
+                        frag.appendChild(mark);
+                        last = re.lastIndex;
+                    }
+                    if (last < tn.nodeValue.length) frag.appendChild(document.createTextNode(tn.nodeValue.slice(last)));
+                    tn.parentNode.replaceChild(frag, tn);
+                    re.lastIndex = 0;
+                });
+            });
+            _searchMatches = [...document.querySelectorAll('#transcript-lines mark.search-hl')];
+            if (_searchMatches.length) { _searchIndex = 0; _scrollToMatch(0); }
+            _updateSearchCounter();
+        }
+        function _scrollToMatch(idx) {
+            _searchMatches.forEach((m, i) => m.classList.toggle('search-hl-active', i === idx));
+            if (_searchMatches[idx]) _searchMatches[idx].scrollIntoView({ block: 'center' });
+        }
+        function searchNext() {
+            if (!_searchMatches.length) return;
+            _searchIndex = (_searchIndex + 1) % _searchMatches.length;
+            _scrollToMatch(_searchIndex);
+            _updateSearchCounter();
+        }
+        function searchPrev() {
+            if (!_searchMatches.length) return;
+            _searchIndex = (_searchIndex - 1 + _searchMatches.length) % _searchMatches.length;
+            _scrollToMatch(_searchIndex);
+            _updateSearchCounter();
+        }
+        function _updateSearchCounter() {
+            const el = document.getElementById('search-counter');
+            if (!el) return;
+            if (!_searchMatches.length) {
+                const q = (document.getElementById('transcript-search-input').value || '').trim();
+                el.textContent = q ? t('search_no_result') : '';
+            } else {
+                el.textContent = tFormat('search_result', { cur: _searchIndex + 1, total: _searchMatches.length });
+            }
+        }
+        // 搜尋高亮在 render 後重新套用
+        function reapplySearchIfActive() {
+            if (!_searchActive) return;
+            const q = (document.getElementById('transcript-search-input').value || '').trim();
+            if (q) doTranscriptSearch();
+        }
+
+        // ── 草稿自動儲存 ────────────────────────────────
+        function _draftAPI() { return window.electronAPI && window.electronAPI.draft ? window.electronAPI.draft : null; }
+        function saveDraft() {
+            const api = _draftAPI();
+            if (!api) return;
+            if (!transcriptRawLines.length && !summaryCache.full) return;
+            api.save({
+                ts: Date.now(),
+                lines: transcriptRawLines.slice(),
+                timestamps: transcriptTimestamps.slice(),
+                summary: summaryCache.full || null,
+                meetingName: document.getElementById('meeting-name').value.trim(),
+            });
+        }
+        function clearDraft() {
+            const api = _draftAPI();
+            if (api) api.clear();
+        }
+        async function checkAndRestoreDraft() {
+            const api = _draftAPI();
+            if (!api) return;
+            const draft = await api.load();
+            if (!draft || !draft.lines || !draft.lines.length) return;
+            if (!confirm(t('draft_restore_prompt'))) { api.clear(); return; }
+            transcriptRawLines = draft.lines;
+            transcriptTimestamps = draft.timestamps || [];
+            transcriptLineNodes = [];
+            transcriptDirtyIndices = new Set(transcriptRawLines.map((_, i) => i));
+            renderTranscriptFromLines(true);
+            if (draft.summary) {
+                summaryCache.full = draft.summary;
+                showSummary('full', draft.summary);
+            }
+            if (draft.meetingName) document.getElementById('meeting-name').value = draft.meetingName;
+            isTranscriptReady = true;
+            updateWordCount();
+            updateUI();
+            showToast(t('draft_restore_toast'));
+            api.clear();
         }
 
         function updateSessionStage() {
@@ -892,6 +1112,8 @@
             addTranscriptLine(data.index, data.timestamp, data.text, data.speaker || 1);
             diagTranscriptLines += 1;
             updateTranscriptDiag();
+            updateWordCount();
+            reapplySearchIfActive();
         });
 
         socket.on('transcript_partial', (data) => {
@@ -1196,6 +1418,7 @@
             const btn = document.getElementById('main-btn');
             isCountdown = true;
             btn.disabled = true;
+            resetRecordingTimer();
 
             // 倒數期間就預先完成 getUserMedia + AudioWorklet 初始化，
             // 讓倒數結束後可以立即收音，不再有額外等待
@@ -1314,6 +1537,7 @@
                 transcriptTimestamps = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
+                updateWordCount();
                 isTranscriptReady = false;
                 summaryCache = { full: null };
                 summaryCacheSourceText = '';
@@ -1328,6 +1552,8 @@
                 `;
                 lucide.createIcons();
 
+                // 新錄音開始時清除草稿
+                clearDraft();
                 // 再通知伺服器啟動錄音
                 const startAck = await emitWithAck('start_recording', {
                     meeting_name: meetingName,
@@ -1342,6 +1568,7 @@
                 lastCompletedMeetingName = '';
                 hasExportedCurrentSession = false;
                 isRecording = true;
+                startRecordingTimer();
                 meetingInput.disabled = true;
                 document.getElementById('save-audio').disabled = true;
             } catch (err) {
@@ -1389,6 +1616,7 @@
                 isPaused = false;
                 recordingSessionReady = false;
                 currentState = 'stopped';
+                stopRecordingTimer();
                 updateUI();
                 if (mediaRecorder) {
                     mediaRecorder.stop();
@@ -1690,7 +1918,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 }
             }
 
-            container.scrollTop = container.scrollHeight;
+            if (!_searchActive) container.scrollTop = container.scrollHeight;
         }
 
         function scheduleTranscriptRender() {
@@ -2114,6 +2342,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             console.log('[Export] 開始匯出，hasSummary:', hasSummary, 'meeting:', meetingName);
             // 傳送已快取的摘要內容；無摘要時傳空字串，後端只寫逐字稿
             // 各模式分別傳送，後端依內容決定寫入哪些檔案
+            clearDraft();
             socket.emit('export_meeting', {
                 meeting_name: meetingName,
                 transcript_override: transcriptText,
@@ -2251,6 +2480,9 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             initMic();
             refreshStoragePath();
             resetDiagnostics();
+            // 草稿：啟動時檢查，每 30 秒自動存一次
+            checkAndRestoreDraft();
+            _autosaveInterval = setInterval(saveDraft, 30000);
         });
 
         applyI18n();
