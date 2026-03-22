@@ -105,7 +105,7 @@ def _find_sherpa_model_dir() -> Path | None:
     cfg = _load_model_pack_config()
     model_dir_name = str(cfg.get(
         "sherpaModelDirName",
-        "sherpa-onnx-streaming-paraformer-zh-2023-09-14"
+        "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
     )).strip()
 
     candidates: list[Path] = []
@@ -197,7 +197,7 @@ class STTEngine:
         if not local_dir:
             raise RuntimeError(
                 "找不到 Sherpa-ONNX 模型目錄，請確認模型已安裝\n"
-                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-zh-2023-09-14）"
+                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-bilingual-zh-en）"
             )
 
         encoder = str(local_dir / "encoder.int8.onnx")
@@ -275,6 +275,7 @@ class STTEngine:
             return self._state.value
 
     def request_stop(self) -> None:
+        t_rs = time.monotonic()
         with self._lock:
             if self._state not in (State.RECORDING, State.PAUSED):
                 return
@@ -283,6 +284,7 @@ class STTEngine:
             self._pending_flush_stream = stream  # 交給 background task 執行 flush
         # 把 queue 中殘留的音訊 chunk 直接送入 stream，讓 _flush_stream 能解碼最後一段語音
         # （不直接丟棄，避免錄音結束前最後幾秒的語音遺失）
+        t_drain = time.monotonic()
         drained = 0
         while not self._audio_queue.empty():
             try:
@@ -297,8 +299,7 @@ class STTEngine:
                     print(f"[STT] request_stop drain 例外: {e}", flush=True)
             except queue.Empty:
                 break
-        if drained:
-            print(f"[STT] request_stop: fed {drained} queued chunk(s) to stream before flush", flush=True)
+        print(f"[STT] request_stop: queue drain {drained} chunk(s)，耗時 {(time.monotonic()-t_drain)*1000:.0f}ms，total {(time.monotonic()-t_rs)*1000:.0f}ms", flush=True)
         # _flush_stream 移到 background task，此處不再阻塞 event handler
 
     def take_pending_flush_stream(self):
@@ -474,30 +475,58 @@ class STTEngine:
     def _flush_stream(self, stream) -> None:
         """送入 tail padding，強制刷出最後未送出的辨識結果。
 
-        步驟：
-        1. 送入 2.5s 靜音，確保 Paraformer encoder right_context 完整解碼
-        2. 解碼所有 ready 的 chunk
-        3. 嘗試 finalize_decoding()（並非所有版本支援，用 try/except 保護）
-        4. 再次解碼 + 取結果，確保最後一句話不被丟棄
+        優化策略（依順序嘗試，盡早結束）：
+        1. finalize_decoding()：若此版本支援則立即強制輸出，幾乎不耗時
+        2. 初始 decode loop：消化 finalize 後的 ready chunks
+        3. 取結果：若已有文字則直接結束（避免後續 padding 耗時）
+        4. 補 1.0s silence padding（僅在步驟 3 無結果時才執行）
+           - Paraformer right_context ≈ 60–160ms，1.0s 已超過 6 倍以上
+           - 原本 2.5s 約需 2–5s CPU 時間（83 個 30ms encoder chunk），已縮短
         """
+        t_start = time.monotonic()
         try:
-            # 2.5s padding 比錄音期間 _process_window 用的 1.5s 更長，確保 right_context 刷出
-            tail = np.zeros(int(2.5 * self.SAMPLE_RATE), dtype=np.float32)
-            stream.accept_waveform(self.SAMPLE_RATE, tail)
-            while self._recognizer.is_ready(stream):
-                self._recognizer.decode_stream(stream)
-
-            # finalize_decoding：強制輸出 encoder buffer 中殘留的結果（非所有版本支援）
+            # ── 步驟 1：嘗試 finalize_decoding（立即強制輸出，不需餵靜音）──
+            t1 = time.monotonic()
+            finalize_supported = False
             try:
                 self._recognizer.finalize_decoding(stream)
-                while self._recognizer.is_ready(stream):
-                    self._recognizer.decode_stream(stream)
-            except Exception:
-                pass  # API 不支援則忽略，已有足夠 padding
+                finalize_supported = True
+                print(f"[STT] finalize_decoding() 支援，耗時 {(time.monotonic()-t1)*1000:.0f}ms", flush=True)
+            except Exception as fe:
+                print(f"[STT] finalize_decoding() 不支援 ({type(fe).__name__})，改用 padding", flush=True)
 
+            # ── 步驟 2：decode 所有 ready chunks ──
+            t2 = time.monotonic()
+            n_decode = 0
+            while self._recognizer.is_ready(stream):
+                self._recognizer.decode_stream(stream)
+                n_decode += 1
+            print(f"[STT] 初始 decode {n_decode} chunk(s)，耗時 {(time.monotonic()-t2)*1000:.0f}ms", flush=True)
+
+            # ── 步驟 3：嘗試直接取結果（若 finalize 有效則此處即可拿到文字）──
+            t3 = time.monotonic()
             result = self._recognizer.get_result(stream)
             text = (result.text if hasattr(result, "text") else str(result)).strip()
-            print(f"[STT] _flush_stream: final_text={repr(text[:60]) if text else '(empty)'}", flush=True)
+            print(f"[STT] 第一次 get_result: {repr(text[:60]) if text else '(empty)'}，耗時 {(time.monotonic()-t3)*1000:.0f}ms", flush=True)
+
+            # ── 步驟 4：若無結果，補 1.0s silence padding 再試一次 ──
+            if not text:
+                t4 = time.monotonic()
+                # 1.0s 已足夠覆蓋 Paraformer right_context（≈160ms），不需要 2.5s
+                tail = np.zeros(int(1.0 * self.SAMPLE_RATE), dtype=np.float32)
+                stream.accept_waveform(self.SAMPLE_RATE, tail)
+                n_pad_decode = 0
+                while self._recognizer.is_ready(stream):
+                    self._recognizer.decode_stream(stream)
+                    n_pad_decode += 1
+                print(f"[STT] 1.0s padding + decode {n_pad_decode} chunk(s)，耗時 {(time.monotonic()-t4)*1000:.0f}ms", flush=True)
+
+                result = self._recognizer.get_result(stream)
+                text = (result.text if hasattr(result, "text") else str(result)).strip()
+                print(f"[STT] padding 後 get_result: {repr(text[:60]) if text else '(empty)'}", flush=True)
+
+            total_ms = (time.monotonic() - t_start) * 1000
+            print(f"[STT] _flush_stream 完成，total={total_ms:.0f}ms，text={repr(text[:60]) if text else '(empty)'}", flush=True)
             if text:
                 self._emit_text(text)
         except Exception as e:
