@@ -121,7 +121,7 @@ function ensureBackendModelCompatPath() {
 }
 
 // ── 模型大小估計（用於進度顯示）──
-const SHERPA_TOTAL_MB = 220;
+const SHERPA_TOTAL_MB = 127;
 const GGUF_TOTAL_MB = 2500; // Phi-4-mini Q4_K_M ≈ 2.5 GB
 
 // ── 下載邏輯 ───────────────────────────────────────────
@@ -260,7 +260,7 @@ async function ensureModels(sendProgress) {
   if (_sherpaEncoderPath(sherpaFinal)) {
     sendProgress({ stage: "sherpa", percent: 97, text: "語音辨識模型已存在，跳過下載" });
   } else if (cfg.sherpaZipDownloadUrl) {
-    sendProgress({ stage: "sherpa", percent: 60, text: "準備下載語音辨識模型（約 1 GB）..." });
+    sendProgress({ stage: "sherpa", percent: 60, text: "準備下載語音辨識模型（約 127 MB）..." });
     await downloadSherpaModel(cfg.sherpaZipDownloadUrl, sherpaBase, sendProgress, 60, 35);
     // 解壓後確保目錄名稱正確（tar 可能解出不同層級）
     if (!_sherpaEncoderPath(sherpaFinal)) {
@@ -371,7 +371,7 @@ p  { font-size:0.8rem; color:#6b7280; margin-bottom:20px; }
 </style></head>
 <body>
   <h3>AI 會議助理 — 首次啟動</h3>
-  <p>正在下載 AI 模型（語言模型 ~1.8 GB + 語音辨識 ~220 MB），下載完成後即可離線使用。</p>
+  <p>正在下載 AI 模型（語言模型 ~2.5 GB + 語音辨識 ~127 MB），下載完成後即可離線使用。</p>
   <div class="track"><div id="bar" class="bar"></div></div>
   <div id="status" class="status">準備中...</div>
   <script>
