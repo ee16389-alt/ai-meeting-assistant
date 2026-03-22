@@ -591,9 +591,8 @@ def _finish_transcription(sid: str, token: str):
     socketio.emit("transcription_ready", {}, room=sid)
 
 
-# n_ctx=4096，扣除 system prompt(~300) + 輸出(512)，可用 input ≈ 3284 tokens ≈ 2100 中文字
-# 80% 安全門檻：≤ 3276 tokens，對應約 2000 中文字
-_MAX_CHARS_SINGLE_PASS = 2000
+# n_ctx=4096，扣除簡化 prompt(~50) + 輸出(256)，可用 input ≈ 3700 tokens ≈ 3000 中文字
+_MAX_CHARS_SINGLE_PASS = 3000
 
 
 def _compress_long_transcript(full_text: str, sid: str = "") -> str:
@@ -618,14 +617,14 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
             }, room=sid)
         t_chunk = time.time()
         print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
-        sys_p = "你是會議記錄助理，請用繁體中文將以下逐字稿段落摘要成 1-2 句最核心重點，越精簡越好，只輸出摘要文字，不輸出其他說明。"
+        sys_p = "用繁體中文摘要以下內容成 1 句重點"
         user_p = f"【第 {idx}/{total} 段】\n{chunk}"
         mini_result = [""]
         chunk_done = threading.Event()
 
         def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done):
             try:
-                for tok in _call_model_stream(sys_p, user_p, max_tokens=128):
+                for tok in _call_model_stream(sys_p, user_p, max_tokens=64):
                     result[0] += tok
             except Exception as e:
                 print(f"[Summary] map-reduce 第 {idx}/{total} 段例外: {e}", flush=True)
@@ -649,35 +648,7 @@ def _generate_summary(mode: str, full_text: str, sid: str):
     global _summary_cancelled
     with _summary_cancelled_lock:
         _summary_cancelled = False
-    _STT_CORRECTION_HINT = (
-        "【語音辨識容錯】逐字稿可能含有語音辨識錯誤（同音異字、錯別字、專有名詞辨識錯誤），"
-        "請在理解內容時自動修正這些錯誤，但不需要特別說明修正了什麼，直接輸出正確內容即可。\n\n"
-    )
-    _EXTRACTION_RULES = (
-        "注意事項：\n"
-        "- 日期只取最後所有人同意的版本，忽略討論中被否決的提案\n"
-        "- 金額只填最終核准總額，差額或尾款若影響決策可在括號補充說明\n"
-        "- 人名只保留直接與會的決策者，不列第三方\n"
-        "- 地點只填最終確認的執行地點\n"
-        "- 排除寒暄、閒聊、純技術背景說明\n"
-        "- 嚴格依據逐字稿內容，不推測補充\n"
-        "請直接輸出會議摘要，不輸出以上任何指示、範例或規則文字本身。\n"
-        "輸出語言：台灣繁體中文，不得含任何簡體字。"
-    )
-    system_prompt = ""
-    if mode == "full":
-        system_prompt = (
-            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
-            f"{_STT_CORRECTION_HINT}"
-            "你是一位專業會議記錄分析師。請根據逐字稿的實際內容與會議性質，以台灣繁體中文撰寫全文摘要，嚴禁出現簡體字。\n\n"
-            "根據會議類型自行選擇最合適的呈現方式，例如：\n"
-            "- 決策型會議：說明背景、列出決議事項與待辦\n"
-            "- 討論型會議：摘要各方觀點、共識與未決議題\n"
-            "- 技術型會議：說明問題、解法方向與後續行動\n"
-            "- 報告型會議：摘要報告重點與回應意見\n"
-            "- 其他：依內容自行判斷最清楚的結構\n\n"
-            f"{_EXTRACTION_RULES}"
-        )
+    system_prompt = "請用繁體中文條列本次會議重點，簡潔為主，只輸出重點，不要說明或前言"
 
     # ── 診斷 log ──────────────────────────────────────────
     char_count = len(full_text)
@@ -690,16 +661,7 @@ def _generate_summary(mode: str, full_text: str, sid: str):
         flush=True,
     )
 
-    # ── 動態 max_tokens（依模式與逐字稿長度調整，避免長文本超時）──────
-    if mode == "full":
-        if char_count <= 500:
-            final_max_tokens = 128
-        elif char_count <= 1500:
-            final_max_tokens = 256
-        else:
-            final_max_tokens = 384
-    else:
-        final_max_tokens = int(os.environ.get("AMA_LLM_MAX_TOKENS", "512"))
+    final_max_tokens = 256
     print(f"[Summary] {mode} mode max_tokens={final_max_tokens}（逐字稿 {char_count} 字）", flush=True)
 
     # 告訴前端準備開始串流

@@ -195,7 +195,7 @@ def _load_local_llm():
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
-            n_threads=int(os.environ.get("AMA_LLM_THREADS", "4")),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", "2")),
             n_threads_batch=int(os.environ.get("AMA_LLM_THREADS_BATCH", "8")),
             n_batch=int(os.environ.get("AMA_LLM_BATCH", "256")),
             use_mmap=True,
@@ -215,7 +215,7 @@ def _load_local_llm():
         _LOCAL_LLM = Llama(
             model_path=str(gguf_path),
             n_ctx=int(os.environ.get("AMA_LLM_CTX", "4096")),
-            n_threads=int(os.environ.get("AMA_LLM_THREADS", "4")),
+            n_threads=int(os.environ.get("AMA_LLM_THREADS", "2")),
             n_batch=128,
             n_gpu_layers=0,
             use_mmap=True,
