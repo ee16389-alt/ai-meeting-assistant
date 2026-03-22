@@ -68,10 +68,10 @@
             box-shadow: var(--shadow-soft);
         }
         .panel-header {
-            height: 120px;
+            height: 96px;
         }
         .panel-body {
-            height: calc(600px - 120px);
+            height: calc(600px - 96px);
         }
         .summary-toolbar {
             margin-top: 6px;
@@ -214,8 +214,8 @@
             word-break: break-word;
         }
         @media (max-width: 1024px) {
-            .panel-header { height: auto; min-height: 108px; }
-            .panel-body { height: calc(520px - 108px); }
+            .panel-header { height: auto; min-height: 84px; }
+            .panel-body { height: calc(520px - 84px); }
             .diag-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         }
         @media (max-width: 768px) {
@@ -279,15 +279,18 @@
             <!-- LEFT: 即時逐字稿 -->
             <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop float-in">
                 <div class="flex flex-col h-full">
-                <div class="p-5 border-b border-slate-200 flex flex-col justify-between panel-header panel-accent-transcript">
+                <div class="px-5 py-3 border-b border-slate-200 flex flex-col justify-between panel-header panel-accent-transcript">
                     <div class="flex justify-between items-center gap-3">
                         <div class="flex items-center gap-2">
                             <i data-lucide="file-text" class="w-5 h-5 text-orange-500"></i>
                             <h2 class="font-bold text-slate-900 text-[28px] leading-tight" data-i18n="transcript_title">即時逐字稿</h2>
                         </div>
                         <div class="flex items-center gap-2 flex-nowrap justify-end">
-                            <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-2 bg-white hover:bg-orange-50 text-slate-900 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                            <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
                                 <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span>編輯全文</span>
+                            </button>
+                            <button id="export-transcript-btn" onclick="exportMeeting()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                                <i data-lucide="download" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
                             </button>
                         </div>
                     </div>
@@ -323,7 +326,7 @@
             <!-- RIGHT: AI 摘要 -->
             <section class="glass rounded-2xl overflow-hidden flex flex-col h-[600px] card-pop float-in">
                 <div class="flex flex-col h-full">
-                <div class="p-5 border-b border-slate-200 panel-header panel-accent-summary">
+                <div class="px-5 py-3 border-b border-slate-200 panel-header panel-accent-summary">
                     <div class="flex justify-between items-center">
                         <div class="flex items-center gap-2">
                             <i data-lucide="cpu" class="w-5 h-5 text-emerald-600"></i>
@@ -332,9 +335,12 @@
                         <span class="text-[10px] bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded uppercase font-bold tracking-wider border border-emerald-100 hidden">Qwen 2.5</span>
                     </div>
                     <div class="flex gap-2 flex-wrap summary-toolbar items-center">
-                        <button onclick="requestSummary('full')" class="summary-tab tab-active text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="full" data-i18n="summary_full">全文摘要</button>
-                        <button onclick="regenerateSummary()" id="regenerate-btn" class="hidden flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg font-medium transition-all bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
-                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新生成
+                        <button id="generate-summary-btn" onclick="requestSummary('full')" class="summary-tab flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200" data-mode="full" data-i18n="generate_summary">生成摘要</button>
+                        <button onclick="regenerateSummary()" id="regenerate-btn" class="hidden flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-orange-500"></i> <span>重新生成</span>
+                        </button>
+                        <button id="export-summary-btn" onclick="exportSummary('full')" class="hidden flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
+                            <i data-lucide="file-down" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_summary">匯出摘要</span>
                         </button>
                     </div>
                 </div>
@@ -394,15 +400,7 @@
                 </button>
                 </div>
             <div class="flex flex-wrap items-center justify-end gap-3">
-                <button onclick="exportMeeting()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-lg shadow-orange-500/30">
-                    <i data-lucide="download" class="w-4 h-4"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
-                </button>
-                <button id="export-summary-btn" onclick="exportSummary('full')"
-                    class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm transition-all border border-emerald-600/40 h-[38px]">
-                    <i data-lucide="file-down" class="w-4 h-4 flex-shrink-0"></i>
-                    <span data-i18n="export_full">匯出全文摘要</span>
-                </button>
-                <button id="open-storage-btn" onclick="openStorageFolder()" class="h-[42px] flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg text-sm transition-all border border-emerald-200 whitespace-nowrap">
+                <button id="open-storage-btn" onclick="openStorageFolder()" class="h-[38px] flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg text-sm transition-all border border-emerald-200 whitespace-nowrap">
                     <i data-lucide="folder-open" class="w-4 h-4"></i> <span data-i18n="open_storage_folder">開啟存放資料夾</span>
                 </button>
             </div>
@@ -535,7 +533,7 @@
         let lastMeetingNameUsed = '';
         let transcriptOpsLockedBySummary = false;
         let isTranscriptReady = true; // false 期間（錄音結束→flush完成前）禁止觸發摘要
-        let _transcriptReadyTimeoutId = null; // 15s 安全解鎖計時器
+        let _transcriptionReadyTimer = null;
         let summaryRequestInFlight = 0;
         let hasExportedCurrentSession = false;
         let currentRecordingToken = '';
@@ -581,6 +579,7 @@
                 empty_transcript: '點擊「開始會議」啟動收音',
                 summary_empty: '錄音結束後，點選上方按鈕產生 AI 摘要',
                 summary_full: '全文摘要',
+                generate_summary: '生成摘要',
                 summary_loading: '正在呼叫本地摘要模型進行分析...',
                 summary_loading_for: '正在產生：{title}',
                 export_transcript: '匯出逐字稿',
@@ -662,6 +661,7 @@
                 empty_transcript: 'Click "Start" to begin recording',
                 summary_empty: 'After recording, choose a tab to generate AI summaries',
                 summary_full: 'Full Summary',
+                generate_summary: 'Generate Summary',
                 summary_loading: 'Running local summary model for analysis...',
                 summary_loading_for: 'Generating: {title}',
                 export_transcript: 'Export Transcript',
@@ -911,10 +911,7 @@
         });
 
         socket.on('transcription_ready', () => {
-            if (_transcriptReadyTimeoutId) {
-                window.clearTimeout(_transcriptReadyTimeoutId);
-                _transcriptReadyTimeoutId = null;
-            }
+            if (_transcriptionReadyTimer) { clearTimeout(_transcriptionReadyTimer); _transcriptionReadyTimer = null; }
             isTranscriptReady = true;
             updateUI();
         });
@@ -1319,10 +1316,6 @@
                 transcriptTimestamps = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
-                if (_transcriptReadyTimeoutId) {
-                    window.clearTimeout(_transcriptReadyTimeoutId);
-                    _transcriptReadyTimeoutId = null;
-                }
                 isTranscriptReady = false;
                 summaryCache = { full: null };
                 summaryCacheSourceText = '';
@@ -1404,19 +1397,18 @@
                 }
                 cleanupRecordingGraph({ releaseStream: true });
                 emitWithAck('stop_recording', {}).catch(() => null);
-                // 安全解鎖：15 秒後若 transcription_ready 未到，強制解鎖摘要按鈕
-                if (_transcriptReadyTimeoutId) window.clearTimeout(_transcriptReadyTimeoutId);
-                _transcriptReadyTimeoutId = window.setTimeout(() => {
-                    _transcriptReadyTimeoutId = null;
-                    if (!isTranscriptReady) {
-                        isTranscriptReady = true;
-                        updateUI();
-                        console.warn('[STT] flush 超過 15 秒仍未完成，強制解鎖摘要按鈕');
-                    }
-                }, 15000);
 
                 // 強制將狀態切回 idle，確保按鈕恢復
                 currentState = 'idle';
+
+                // 15 秒安全解鎖：若 transcription_ready 遲遲未到，強制解除摘要禁止
+                if (_transcriptionReadyTimer) clearTimeout(_transcriptionReadyTimer);
+                _transcriptionReadyTimer = setTimeout(() => {
+                    if (!isTranscriptReady) {
+                        isTranscriptReady = true;
+                        updateUI();
+                    }
+                }, 15000);
 
                 if (previousMeetingName) {
                     lastMeetingNameUsed = previousMeetingName;
@@ -1591,8 +1583,11 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 el.disabled = summaryBlocked;
                 el.classList.toggle('opacity-50', summaryBlocked);
                 el.classList.toggle('cursor-not-allowed', summaryBlocked);
-                el.title = !isTranscriptReady ? '逐字稿處理中，請稍候...' : '';
             });
+            const genBtn = document.getElementById('generate-summary-btn');
+            if (genBtn) {
+                genBtn.title = !isTranscriptReady ? t('toast_transcript_processing') : '';
+            }
             const fulltextEditBtn = document.getElementById('fulltext-edit-btn');
             if (fulltextEditBtn && !fulltextEditBtn.classList.contains('hidden')) {
                 const locked = transcriptBusy || transcriptOpsLockedBySummary;
@@ -1728,7 +1723,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         function setTranscriptOpsLocked(locked) {
             transcriptOpsLockedBySummary = Boolean(locked);
-            ['fulltext-edit-btn'].forEach((id) => {
+            ['fulltext-edit-btn', 'regenerate-btn'].forEach((id) => {
                 const btn = document.getElementById(id);
                 if (!btn || btn.classList.contains('hidden')) return;
                 btn.disabled = transcriptOpsLockedBySummary;
@@ -2045,7 +2040,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryCache[mode] = null;
 
             // 顯示 loading
-            const loadingTitle = t('summary_full');
+            const loadingTitle = t('generate_summary');
             document.getElementById('summary-container').innerHTML = `
                 <div class="h-full flex flex-col items-center justify-center space-y-4">
                     <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
@@ -2073,8 +2068,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         }
 
         function _showRegenerateBtn(visible) {
-            const btn = document.getElementById('regenerate-btn');
-            if (btn) btn.classList.toggle('hidden', !visible);
+            ['regenerate-btn', 'export-summary-btn'].forEach((id) => {
+                const btn = document.getElementById(id);
+                if (btn) btn.classList.toggle('hidden', !visible);
+            });
         }
 
         function showSummary(mode, content) {

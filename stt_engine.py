@@ -478,14 +478,11 @@ class STTEngine:
             reason = "endpoint" if is_ep else "stale_timeout"
             # 保存觸發 endpoint 的 window，reset 後回放以補救段落邊界漏字
             boundary_chunk = samples.copy()
-            # 嘗試 finalize_decoding（低延遲，無需餵靜音）；
-            # 不支援時僅補 80ms 靜音（< 1 Zipformer chunk = 無額外 decode 開銷），
-            # 避免原本 1.5s 靜音 × 多次 decode 在慢機器上造成 ~500ms 阻塞，
-            # 最終導致 worker queue 在約 57 秒後塞滿、新音訊全部丟棄。
+            # 優先用 finalize_decoding 強制輸出，不需餵靜音；不支援時 fallback 0.5s padding
             try:
                 self._recognizer.finalize_decoding(stream)
             except Exception:
-                tail = np.zeros(int(0.08 * self.SAMPLE_RATE), dtype=np.float32)
+                tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
                 stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
