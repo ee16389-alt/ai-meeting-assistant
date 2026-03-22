@@ -1197,6 +1197,10 @@
             isCountdown = true;
             btn.disabled = true;
 
+            // 倒數期間就預先完成 getUserMedia + AudioWorklet 初始化，
+            // 讓倒數結束後可以立即收音，不再有額外等待
+            initMic().catch(() => {});
+
             let remaining = 3;
             const renderCountdown = () => {
                 btn.innerHTML = `<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>${t('countdown_start')} ${remaining}</span>`;
