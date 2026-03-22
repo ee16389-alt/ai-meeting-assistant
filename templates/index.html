@@ -535,6 +535,7 @@
         let lastMeetingNameUsed = '';
         let transcriptOpsLockedBySummary = false;
         let isTranscriptReady = true; // false 期間（錄音結束→flush完成前）禁止觸發摘要
+        let _transcriptReadyTimeoutId = null; // 15s 安全解鎖計時器
         let summaryRequestInFlight = 0;
         let hasExportedCurrentSession = false;
         let currentRecordingToken = '';
@@ -910,6 +911,10 @@
         });
 
         socket.on('transcription_ready', () => {
+            if (_transcriptReadyTimeoutId) {
+                window.clearTimeout(_transcriptReadyTimeoutId);
+                _transcriptReadyTimeoutId = null;
+            }
             isTranscriptReady = true;
             updateUI();
         });
@@ -1314,6 +1319,10 @@
                 transcriptTimestamps = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
+                if (_transcriptReadyTimeoutId) {
+                    window.clearTimeout(_transcriptReadyTimeoutId);
+                    _transcriptReadyTimeoutId = null;
+                }
                 isTranscriptReady = false;
                 summaryCache = { full: null };
                 summaryCacheSourceText = '';
@@ -1395,6 +1404,16 @@
                 }
                 cleanupRecordingGraph({ releaseStream: true });
                 emitWithAck('stop_recording', {}).catch(() => null);
+                // 安全解鎖：15 秒後若 transcription_ready 未到，強制解鎖摘要按鈕
+                if (_transcriptReadyTimeoutId) window.clearTimeout(_transcriptReadyTimeoutId);
+                _transcriptReadyTimeoutId = window.setTimeout(() => {
+                    _transcriptReadyTimeoutId = null;
+                    if (!isTranscriptReady) {
+                        isTranscriptReady = true;
+                        updateUI();
+                        console.warn('[STT] flush 超過 15 秒仍未完成，強制解鎖摘要按鈕');
+                    }
+                }, 15000);
 
                 // 強制將狀態切回 idle，確保按鈕恢復
                 currentState = 'idle';
@@ -1572,6 +1591,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 el.disabled = summaryBlocked;
                 el.classList.toggle('opacity-50', summaryBlocked);
                 el.classList.toggle('cursor-not-allowed', summaryBlocked);
+                el.title = !isTranscriptReady ? '逐字稿處理中，請稍候...' : '';
             });
             const fulltextEditBtn = document.getElementById('fulltext-edit-btn');
             if (fulltextEditBtn && !fulltextEditBtn.classList.contains('hidden')) {

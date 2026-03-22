@@ -190,7 +190,12 @@ def _warmup_llm():
         print(f"[LLM] 模型預熱失敗（不影響正常功能）: {e}", flush=True)
 
 
-threading.Thread(target=_warmup_llm, daemon=True).start()
+def _start_warmup_delayed():
+    """延遲 60 秒再預熱，避免影響第一場會議的 STT 初始化與倒數計時。"""
+    time.sleep(60)
+    _warmup_llm()
+
+threading.Thread(target=_start_warmup_delayed, daemon=True, name="llm-warmup").start()
 
 # 會議逐字稿暫存（用於摘要與匯出）
 transcript_lines: list[dict] = []
@@ -522,7 +527,7 @@ def handle_export_summary(data):
 # ── 背景任務 ───────────────────────────────────────────
 
 
-_FINISH_TRANSCRIPTION_TIMEOUT = 30.0  # 最長等待 flush 完成的秒數
+_FINISH_TRANSCRIPTION_TIMEOUT = 15.0  # 最長等待 flush 完成的秒數（超時自動解鎖摘要按鈕）
 
 # 摘要取消旗標（每次新任務開始前重設）
 _summary_cancelled = False
@@ -549,45 +554,49 @@ signal.signal(signal.SIGINT, _handle_shutdown_signal)
 
 
 def _finish_transcription(sid: str, token: str):
-    """背景完成停止後的 STT flush（帶 30 秒超時保護）"""
+    """背景完成停止後的 STT flush（帶超時保護，超時後仍 emit transcription_ready 解鎖前端）"""
     t0 = time.time()
-    print(f"[Stop] _finish_transcription 開始", flush=True)
+    queue_size = stt._audio_queue.qsize() if hasattr(stt, "_audio_queue") else -1
+    print(f"[Stop] _finish_transcription 開始，audio queue size={queue_size}", flush=True)
 
     # 取走等待 flush 的 stream（由 request_stop 存放）
     t_take = time.time()
     flush_stream = stt.take_pending_flush_stream()
-    print(f"[Stop] take_pending_flush_stream 耗時 {(time.time()-t_take)*1000:.0f}ms", flush=True)
+    print(f"[Stop] ① take_pending_flush_stream 耗時 {(time.time()-t_take)*1000:.0f}ms，"
+          f"stream={'有' if flush_stream else '無'}", flush=True)
     if flush_stream is None:
-        print(f"[Stop] 無待 flush stream，直接結束 ({time.time()-t0:.2f}s)", flush=True)
+        print(f"[Stop] 無待 flush stream，直接 emit transcription_ready（{time.time()-t0:.2f}s）", flush=True)
         socketio.emit("transcription_ready", {}, room=sid)
         return
 
-    print(f"[Stop] 啟動 _do_flush thread（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
+    print(f"[Stop] ② 啟動 _do_flush thread（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
     t1 = time.time()
     flush_done = threading.Event()
 
     def _do_flush():
         t_flush = time.time()
-        print(f"[Stop] _do_flush thread 開始（距 stop 呼叫 {time.time()-t0:.2f}s）", flush=True)
+        print(f"[Stop] ③ _do_flush thread 啟動（距 stop {time.time()-t0:.2f}s）", flush=True)
         try:
             stt._flush_stream(flush_stream)
         except Exception as e:
-            print(f"[Stop] flush_stream 例外: {e}", flush=True)
+            print(f"[Stop] _do_flush 例外: {e}", flush=True)
         finally:
-            print(f"[Stop] _do_flush thread 結束，耗時 {time.time()-t_flush:.2f}s", flush=True)
+            print(f"[Stop] ④ _do_flush 完成，耗時 {time.time()-t_flush:.2f}s，"
+                  f"距 stop 共 {time.time()-t0:.2f}s", flush=True)
             flush_done.set()
 
     flush_thread = threading.Thread(target=_do_flush, daemon=True, name="stt-flush")
     flush_thread.start()
-    print(f"[Stop] flush thread 已啟動，開始 Event.wait(timeout={_FINISH_TRANSCRIPTION_TIMEOUT})", flush=True)
+    print(f"[Stop] ⑤ 等待 flush_done（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
 
     completed = flush_done.wait(timeout=_FINISH_TRANSCRIPTION_TIMEOUT)
     if not completed:
-        print(f"[Stop] flush_stream 超時（>{_FINISH_TRANSCRIPTION_TIMEOUT}s），強制放棄", flush=True)
+        print(f"[Stop] ⑥ flush 超時（>{_FINISH_TRANSCRIPTION_TIMEOUT}s），強制放棄，"
+              f"background flush thread 仍在執行中", flush=True)
     else:
-        print(f"[Stop] Event.wait 結束，flush 總耗時 {time.time()-t1:.2f}s", flush=True)
+        print(f"[Stop] ⑥ flush 完成，等待耗時 {time.time()-t1:.2f}s", flush=True)
 
-    print(f"[Stop] _finish_transcription 總耗時 {time.time()-t0:.2f}s，emit transcription_ready", flush=True)
+    print(f"[Stop] ⑦ emit transcription_ready，_finish_transcription 總耗時 {time.time()-t0:.2f}s", flush=True)
     socketio.emit("transcription_ready", {}, room=sid)
 
 
