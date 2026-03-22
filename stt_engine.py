@@ -493,6 +493,16 @@ class STTEngine:
             print(f"[STT] flush ({reason}), text={repr(emit_text)}", flush=True)
             if emit_text:
                 self._emit_text(emit_text)
+            # 若停止已被要求，保留 stream 讓 _flush_stream 接手，不重置也不 warmup
+            with self._lock:
+                stopping = self._state != State.RECORDING
+            if stopping:
+                self._last_seen_text = ""
+                self._last_text_change_time = 0.0
+                self._last_confirmed_text = ""
+                with self._lock:
+                    self._last_partial_text = ""
+                return
             self._recognizer.reset(stream)
             self._last_seen_text = ""
             self._last_text_change_time = 0.0

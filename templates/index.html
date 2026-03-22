@@ -1805,6 +1805,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 showToast(t('alert_edit_blocked'));
                 return;
             }
+            if (!isTranscriptReady) {
+                showToast(t('toast_transcript_processing'));
+                return;
+            }
             if (!transcriptRawLines.length) {
                 showToast(t('empty_transcript'));
                 return;
