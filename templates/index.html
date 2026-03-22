@@ -32,6 +32,11 @@
             50% { opacity: 0.5; }
         }
         .animate-pulse-red { animation: pulse-red 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes progress-slide {
+            0%   { transform: translateX(-100%); }
+            100% { transform: translateX(500%); }
+        }
+        .progress-indeterminate { animation: progress-slide 1.4s ease-in-out infinite; width: 30% !important; transition: none !important; }
         .float-in { animation: float-in 0.45s ease both; }
         .tab-active { background: linear-gradient(135deg, #f36b21, #ff7f38); color: white; box-shadow: 0 10px 18px rgba(243, 107, 33, 0.28); }
         .tab-inactive { background-color: rgba(255, 255, 255, 0.82); color: #475569; border: 1px solid rgba(148,163,184,0.22); }
@@ -334,9 +339,14 @@
                     </div>
                 </div>
                 <!-- 摘要進度列 + 取消按鈕：位於 header 與內容區之間，生成中才顯示 -->
-                <div id="summary-progress-row" style="display:none; align-items:center; gap:8px; padding:6px 20px; background:#fff7ed; border-bottom:1px solid #fed7aa;">
-                    <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
-                    <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
+                <div id="summary-progress-row" style="display:none; flex-direction:column; gap:4px; padding:6px 20px 8px; background:#fff7ed; border-bottom:1px solid #fed7aa;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
+                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
+                    </div>
+                    <div style="height:4px; background:#fed7aa; border-radius:2px; overflow:hidden;">
+                        <div id="summary-progress-bar" style="height:100%; background:#f97316; border-radius:2px; width:0%; transition:width 0.4s ease;"></div>
+                    </div>
                 </div>
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-400 text-center p-10">
@@ -913,12 +923,16 @@
             if (summaryRequestInFlight <= 0) return;
             const row = document.getElementById('summary-progress-row');
             const label = document.getElementById('summary-progress-label');
-            if (!row || !label) return;
+            const bar = document.getElementById('summary-progress-bar');
+            if (!row || !label || !bar) return;
             row.style.display = 'flex';
+            bar.classList.remove('progress-indeterminate');
             if (data.stage === 'final') {
                 label.textContent = '最終整合中...';
+                bar.style.width = '100%';
             } else {
                 label.textContent = `摘要生成中（${data.current}／${data.total} 段）...`;
+                bar.style.width = `${Math.round(data.current / data.total * 100)}%`;
             }
         });
 
@@ -1716,6 +1730,16 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                     showToast('摘要請求逾時，請重新點擊。');
                 }
             }, 120000);
+            // 立即顯示進度列（indeterminate 動畫，等 summary_progress 事件接管）
+            const row = document.getElementById('summary-progress-row');
+            const label = document.getElementById('summary-progress-label');
+            const bar = document.getElementById('summary-progress-bar');
+            if (row && label && bar) {
+                label.textContent = '摘要生成中...';
+                bar.style.width = '30%';
+                bar.classList.add('progress-indeterminate');
+                row.style.display = 'flex';
+            }
         }
 
         function endSummaryRequest() {
@@ -1726,9 +1750,15 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 _summaryTimeoutId = null;
             }
             if (summaryRequestInFlight === 0) {
-                const row = document.getElementById('summary-progress-row');
-                if (row) row.style.display = 'none';
+                _hideProgressBar();
             }
+        }
+
+        function _hideProgressBar() {
+            const row = document.getElementById('summary-progress-row');
+            const bar = document.getElementById('summary-progress-bar');
+            if (row) row.style.display = 'none';
+            if (bar) { bar.classList.remove('progress-indeterminate'); bar.style.width = '0%'; }
         }
 
         function cancelSummary() {
@@ -1736,16 +1766,14 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             endSummaryRequest();
             summaryRequestInFlight = 0;
             setTranscriptOpsLocked(false);
-            const row = document.getElementById('summary-progress-row');
-            if (row) row.style.display = 'none';
+            _hideProgressBar();
             showToast('摘要已取消');
         }
 
         function clearSummaryLocksForNewRecording() {
             summaryRequestInFlight = 0;
             setTranscriptOpsLocked(false);
-            const row = document.getElementById('summary-progress-row');
-            if (row) row.style.display = 'none';
+            _hideProgressBar();
         }
 
         function guardTranscriptOpsLocked() {
