@@ -482,7 +482,7 @@ class STTEngine:
             try:
                 self._recognizer.finalize_decoding(stream)
             except Exception:
-                tail = np.zeros(int(0.5 * self.SAMPLE_RATE), dtype=np.float32)
+                tail = np.zeros(int(0.08 * self.SAMPLE_RATE), dtype=np.float32)
                 stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
