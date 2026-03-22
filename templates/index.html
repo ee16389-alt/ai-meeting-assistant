@@ -328,8 +328,6 @@
                     </div>
                     <div class="flex gap-2 flex-wrap summary-toolbar items-center">
                         <button onclick="requestSummary('full')" class="summary-tab tab-active text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="full" data-i18n="summary_full">全文摘要</button>
-                        <button onclick="requestSummary('key_points')" class="summary-tab tab-inactive text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all" data-mode="key_points" data-i18n="summary_key">重點條列</button>
-                        <button onclick="requestAllSummaries()" class="text-sm px-3.5 py-1.5 rounded-lg font-medium transition-all bg-emerald-600 text-white hover:bg-emerald-500" data-i18n="summary_all">全部摘要</button>
                         <button onclick="regenerateSummary()" id="regenerate-btn" class="hidden flex items-center gap-1 text-sm px-3 py-1.5 rounded-lg font-medium transition-all bg-white border border-slate-300 text-slate-600 hover:bg-slate-50">
                             <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 重新生成
                         </button>
@@ -343,7 +341,7 @@
                 <div id="summary-container" class="flex-1 overflow-y-auto p-6 panel-body">
                     <div id="summary-empty" class="h-full flex flex-col items-center justify-center text-slate-400 text-center p-10">
                         <i data-lucide="cpu" class="w-16 h-16 mb-4 opacity-30"></i>
-                        <p data-i18n="summary_empty">錄音結束後，點選上方分頁產生 AI 摘要</p>
+                        <p data-i18n="summary_empty">錄音結束後，點選上方按鈕產生 AI 摘要</p>
                     </div>
                 </div>
                 </div>
@@ -389,32 +387,11 @@
                 <button onclick="exportMeeting()" class="flex items-center gap-2 bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-lg text-sm transition-all shadow-lg shadow-orange-500/30">
                     <i data-lucide="download" class="w-4 h-4"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
                 </button>
-                <div class="relative" id="export-summary-wrap">
-                    <button id="export-summary-btn" onclick="toggleExportSummaryMenu()"
-                        class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm transition-all border border-emerald-600/40 h-[38px]">
-                        <i data-lucide="file-down" class="w-4 h-4 flex-shrink-0"></i>
-                        <span data-i18n="export_summary">匯出摘要</span>
-                        <i data-lucide="chevron-down" class="w-3.5 h-3.5 opacity-80 flex-shrink-0"></i>
-                    </button>
-                    <div id="export-summary-menu" class="hidden absolute right-0 mt-1.5 bg-white rounded-xl shadow-xl border border-slate-200 z-50 overflow-hidden" style="min-width:172px">
-                        <button onclick="exportSummary('full')"
-                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
-                            <i data-lucide="align-left" class="w-4 h-4 flex-shrink-0"></i>
-                            <span data-i18n="export_full">匯出全文摘要</span>
-                        </button>
-                        <button onclick="exportSummary('key_points')"
-                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
-                            <i data-lucide="list" class="w-4 h-4 flex-shrink-0"></i>
-                            <span data-i18n="export_key">匯出重點條列</span>
-                        </button>
-                        <div class="border-t border-slate-100 my-0.5"></div>
-                        <button onclick="exportSummary('all')"
-                            class="w-full text-left flex items-center gap-2.5 px-4 py-2.5 text-sm text-slate-800 hover:bg-emerald-50 hover:text-emerald-700 transition-colors">
-                            <i data-lucide="layers" class="w-4 h-4 flex-shrink-0"></i>
-                            <span data-i18n="export_all">匯出全部摘要</span>
-                        </button>
-                    </div>
-                </div>
+                <button id="export-summary-btn" onclick="exportSummary('full')"
+                    class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm transition-all border border-emerald-600/40 h-[38px]">
+                    <i data-lucide="file-down" class="w-4 h-4 flex-shrink-0"></i>
+                    <span data-i18n="export_full">匯出全文摘要</span>
+                </button>
                 <button id="open-storage-btn" onclick="openStorageFolder()" class="h-[42px] flex items-center justify-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 px-4 py-2 rounded-lg text-sm transition-all border border-emerald-200 whitespace-nowrap">
                     <i data-lucide="folder-open" class="w-4 h-4"></i> <span data-i18n="open_storage_folder">開啟存放資料夾</span>
                 </button>
@@ -547,6 +524,7 @@
         let latestStoragePath = '';
         let lastMeetingNameUsed = '';
         let transcriptOpsLockedBySummary = false;
+        let isTranscriptReady = true; // false 期間（錄音結束→flush完成前）禁止觸發摘要
         let summaryRequestInFlight = 0;
         let hasExportedCurrentSession = false;
         let currentRecordingToken = '';
@@ -590,19 +568,13 @@
                 lang_id: '印尼文',
                 lang_vi: '越南文',
                 empty_transcript: '點擊「開始會議」啟動收音',
-                summary_empty: '錄音結束後，點選上方分頁產生 AI 摘要',
+                summary_empty: '錄音結束後，點選上方按鈕產生 AI 摘要',
                 summary_full: '全文摘要',
-                summary_key: '重點條列',
-                summary_action: '待辦清單',
-                summary_all: '全部摘要',
                 summary_loading: '正在呼叫本地摘要模型進行分析...',
                 summary_loading_for: '正在產生：{title}',
                 export_transcript: '匯出逐字稿',
                 export_summary: '匯出摘要',
                 export_full: '匯出全文摘要',
-                export_key: '匯出重點條列',
-                export_action: '匯出待辦清單',
-                export_all: '匯出全部摘要',
                 usage_guide: '使用說明',
                 guide_1_h: '1. 開始會議',
                 guide_1_b: '輸入會議名稱後，點擊「開始會議」。系統會啟動麥克風並即時顯示逐字稿。',
@@ -640,6 +612,7 @@
                 session_finished_hint: '本次會議「{name}」已結束。若要開始下一場，請輸入新的會議名稱後按「開始會議」。',
                 toast_session_finished: '本次會議已結束，可以開始下一場。',
                 toast_model_switched: '模型已切換：{model}',
+                toast_transcript_processing: '逐字稿處理中，請稍候...',
                 model_unready: ' (未就緒)',
             },
             en: {
@@ -678,17 +651,11 @@
                 empty_transcript: 'Click "Start" to begin recording',
                 summary_empty: 'After recording, choose a tab to generate AI summaries',
                 summary_full: 'Full Summary',
-                summary_key: 'Key Points',
-                summary_action: 'Action Items',
-                summary_all: 'All Summaries',
                 summary_loading: 'Running local summary model for analysis...',
                 summary_loading_for: 'Generating: {title}',
                 export_transcript: 'Export Transcript',
                 export_summary: 'Export Summary',
                 export_full: 'Export Full Summary',
-                export_key: 'Export Key Points',
-                export_action: 'Export Action Items',
-                export_all: 'Export All Summaries',
                 usage_guide: 'User Guide',
                 guide_1_h: '1. Start a Meeting',
                 guide_1_b: 'Enter a meeting name and click "Start Meeting". The microphone will activate and the live transcript will appear in real time.',
@@ -726,6 +693,7 @@
                 session_finished_hint: 'Meeting "{name}" has ended. To start the next one, enter a new meeting name and click Start.',
                 toast_session_finished: 'This meeting has ended. You can start the next one.',
                 toast_model_switched: 'Model switched: {model}',
+                toast_transcript_processing: 'Transcript processing, please wait...',
                 model_unready: ' (Unavailable)',
             },
         };
@@ -931,12 +899,14 @@
             clearPartialLine();
         });
 
+        socket.on('transcription_ready', () => {
+            isTranscriptReady = true;
+            updateUI();
+        });
+
         socket.on('summary_start', (data) => {
-            if (summaryViewMode === 'all') {
-                renderAllSummarySkeleton(); // 先顯示骨架
-            }
-            // 單一摘要模式：保留 requestSummary() 已設好的 loading spinner，
-            // 等第一個 summary_token 到達時才建立 stream div，避免呈現空白欄位
+            // 保留 requestSummary() 已設好的 loading spinner，
+            // 等第一個 summary_token 到達時才建立 stream div
         });
 
         socket.on('summary_progress', (data) => {
@@ -955,27 +925,13 @@
         socket.on('summary_token', (data) => {
             // 忽略非當前 session 發來的殘留事件（防止後台舊任務污染畫面）
             if (summaryRequestInFlight <= 0) return;
-            let target;
-            if (summaryViewMode === 'all') {
+            // 第一個 token 到達時才建立 stream div（取代 loading spinner）
+            let target = document.getElementById(`summary-stream-${data.mode}`);
+            if (!target) {
+                document.getElementById('summary-container').innerHTML =
+                    `<div id="summary-stream-${data.mode}" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;"></div>`;
                 target = document.getElementById(`summary-stream-${data.mode}`);
-                if (!target && data.mode === 'all') {
-                    const container = document.getElementById('summary-container');
-                    target = document.getElementById('summary-stream-all');
-                    if (!target) {
-                        container.innerHTML = '<div id="summary-stream-all" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;"></div>';
-                        target = document.getElementById('summary-stream-all');
-                    }
-                }
-            } else {
-                // 第一個 token 到達時才建立 stream div（取代 loading spinner）
-                target = document.getElementById(`summary-stream-${data.mode}`);
-                if (!target) {
-                    document.getElementById('summary-container').innerHTML =
-                        `<div id="summary-stream-${data.mode}" class="bg-white p-4 rounded-lg border border-orange-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;"></div>`;
-                    target = document.getElementById(`summary-stream-${data.mode}`);
-                }
             }
-
             if (target) {
                 target.textContent += data.token;
                 const container = document.getElementById('summary-container');
@@ -990,32 +946,7 @@
             // 清掉串流暫存區
             const streamDiv = document.getElementById(`summary-stream-${data.mode}`);
             if (streamDiv) streamDiv.remove();
-
-            if (data.mode === 'all') {
-                // 解析拆分成 full 和 key_points
-                const raw = data.content || '';
-                let full = '', key = '';
-                if (raw.includes('【全文摘要】')) {
-                    full = raw.split('【全文摘要】')[1].split('【重點條列】')[0].trim();
-                }
-                if (raw.includes('【重點條列】')) {
-                    key = raw.split('【重點條列】')[1].trim();
-                }
-                if (!full && !key) { full = raw; }
-                summaryCache.full = full || raw;
-                summaryCache.key_points = key;
-                showSummary('full', summaryCache.full);
-                if (key) showSummary('key_points', key);
-                if (_prevFocus && document.activeElement !== _prevFocus && document.contains(_prevFocus)) {
-                    _prevFocus.focus({ preventScroll: true });
-                }
-                return;
-            }
-
             summaryCache[data.mode] = data.content;
-            if (summaryViewMode === 'single' && activeSingleSummaryMode && data.mode !== activeSingleSummaryMode) {
-                return;
-            }
             showSummary(data.mode, data.content);
             // 還原焦點：若 DOM 操作導致焦點跳走，且原焦點仍在 DOM 中，回到原位
             if (_prevFocus && document.activeElement !== _prevFocus && document.contains(_prevFocus)) {
@@ -1106,7 +1037,7 @@
             showToast(msg);
             // 匯出失敗時重新顯示提示 modal，讓使用者選擇重試或放棄
             const hasPrevTranscript = transcriptRawLines.length > 0;
-            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            const hasPrevSummary = !!summaryCache.full;
             if (hasPrevTranscript || hasPrevSummary) {
                 const items = [];
                 if (hasPrevTranscript) items.push('逐字稿');
@@ -1210,7 +1141,7 @@
 
             // 若上一場有逐字稿或摘要且尚未匯出，提醒使用者
             const hasPrevTranscript = transcriptRawLines.length > 0;
-            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            const hasPrevSummary = !!summaryCache.full;
             if ((hasPrevTranscript || hasPrevSummary) && !hasExportedCurrentSession) {
                 const items = [];
                 if (hasPrevTranscript) items.push('逐字稿');
@@ -1369,10 +1300,9 @@
                 transcriptTimestamps = [];
                 transcriptLineNodes = [];
                 transcriptDirtyIndices = new Set();
-                summaryCache = { full: null, key_points: null };
+                isTranscriptReady = false;
+                summaryCache = { full: null };
                 summaryCacheSourceText = '';
-                summaryViewMode = 'single';
-                activeSingleSummaryMode = 'full';
                 _showRegenerateBtn(false);
                 clearSummaryLocksForNewRecording();
                 currentRecordingToken = '';
@@ -1564,7 +1494,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         window.addEventListener('beforeunload', (e) => {
             cleanupRecordingGraph({ releaseStream: true });
             const hasPrevTranscript = transcriptRawLines.length > 0;
-            const hasPrevSummary = !!(summaryCache.full || summaryCache.key_points);
+            const hasPrevSummary = !!summaryCache.full;
             if (!hasExportedCurrentSession && (hasPrevTranscript || hasPrevSummary)) {
                 e.preventDefault();
                 e.returnValue = '尚有未匯出的逐字稿或摘要，關閉後資料將會遺失。';
@@ -1623,18 +1553,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 saveAudioCheckbox.classList.toggle('cursor-not-allowed', locked);
             }
             const transcriptBusy = currentState !== 'idle';
-            const summaryBlocked = currentState === 'recording' || currentState === 'paused';
+            const summaryBlocked = currentState === 'recording' || currentState === 'paused' || !isTranscriptReady;
             document.querySelectorAll('.summary-tab').forEach((el) => {
                 el.disabled = summaryBlocked;
                 el.classList.toggle('opacity-50', summaryBlocked);
                 el.classList.toggle('cursor-not-allowed', summaryBlocked);
             });
-            const allSummaryBtn = document.querySelector('[data-i18n="summary_all"]');
-            if (allSummaryBtn) {
-                allSummaryBtn.disabled = summaryBlocked;
-                allSummaryBtn.classList.toggle('opacity-50', summaryBlocked);
-                allSummaryBtn.classList.toggle('cursor-not-allowed', summaryBlocked);
-            }
             const fulltextEditBtn = document.getElementById('fulltext-edit-btn');
             if (fulltextEditBtn && !fulltextEditBtn.classList.contains('hidden')) {
                 const locked = transcriptBusy || transcriptOpsLockedBySummary;
@@ -2051,14 +1975,15 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 showToast(t('alert_summary_blocked_recording'));
                 return;
             }
+            if (!isTranscriptReady) {
+                showToast(t('toast_transcript_processing'));
+                return;
+            }
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
                 showToast(t('alert_need_transcript_summary'));
                 return;
             }
-            summaryViewMode = 'single';
-            activeSingleSummaryMode = mode;
-            applySummaryTabState(mode);
             if (summaryCache[mode] && !forceRegenerate) {
                 showSummary(mode, summaryCache[mode]);
                 return;
@@ -2072,7 +1997,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryCache[mode] = null;
 
             // 顯示 loading
-            const loadingTitle = summaryTitle(mode);
+            const loadingTitle = t('summary_full');
             document.getElementById('summary-container').innerHTML = `
                 <div class="h-full flex flex-col items-center justify-center space-y-4">
                     <div class="w-12 h-12 border-4 border-orange-100 border-t-orange-500 rounded-full animate-spin"></div>
@@ -2086,49 +2011,17 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             });
         }
 
-        function summaryTitle(mode) {
-            if (mode === 'full') return t('summary_full');
-            if (mode === 'key_points') return t('summary_key');
-            return mode;
-        }
-
-        let summaryCache = {
-            full: null,
-            key_points: null,
-        };
+        let summaryCache = { full: null };
         let summaryCacheSourceText = '';
-        let summaryViewMode = 'single';
-        let activeSingleSummaryMode = 'full';
 
         function resetSummaryCacheForTranscript(transcriptText) {
             if (summaryCacheSourceText === transcriptText) return;
             summaryCacheSourceText = transcriptText;
-            summaryCache = { full: null, key_points: null };
-            activeSingleSummaryMode = 'full';
-        }
-
-        function applySummaryTabState(mode) {
-            document.querySelectorAll('.summary-tab').forEach(tab => {
-                if (tab.dataset.mode === mode) {
-                    tab.className = tab.className.replace('tab-inactive', 'tab-active');
-                } else {
-                    tab.className = tab.className.replace('tab-active', 'tab-inactive');
-                }
-            });
-        }
-
-        function renderAllSummariesFromCache() {
-            renderAllSummarySkeleton();
-            if (summaryCache.full) showSummary('full', summaryCache.full);
-            if (summaryCache.key_points) showSummary('key_points', summaryCache.key_points);
+            summaryCache = { full: null };
         }
 
         function regenerateSummary() {
-            if (summaryViewMode === 'all') {
-                requestAllSummaries(true);
-            } else {
-                requestSummary(activeSingleSummaryMode || 'full', true);
-            }
+            requestSummary('full', true);
         }
 
         function _showRegenerateBtn(visible) {
@@ -2136,41 +2029,9 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (btn) btn.classList.toggle('hidden', !visible);
         }
 
-        function requestAllSummaries(forceRegenerate = false) {
-            if (currentState === 'recording' || currentState === 'paused') {
-                showToast(t('alert_summary_blocked_recording'));
-                return;
-            }
-            if (summaryRequestInFlight > 0) return;
-            const transcriptOverride = getTranscriptForSummary();
-            if (!transcriptOverride) {
-                showToast(t('alert_need_transcript_summary'));
-                return;
-            }
-            summaryViewMode = 'all';
-            activeSingleSummaryMode = null;
-            if (summaryCache.full && summaryCache.key_points && !forceRegenerate) {
-                renderAllSummariesFromCache();
-                return;
-            }
-            beginSummaryRequest(1);
-            summaryCache = { full: null, key_points: null };
-            renderAllSummarySkeleton();
-            socket.emit('request_summary', { mode: 'all', transcript_override: transcriptOverride });
-        }
-
         function showSummary(mode, content) {
             summaryCache[mode] = content;
             _showRegenerateBtn(true);
-
-            // 若正在「全部摘要」模式，更新對應區塊
-            const allContainer = document.getElementById('summary-all');
-            if (summaryViewMode === 'all' && allContainer) {
-                renderSummaryBox(mode, content);
-                return;
-            }
-
-            // 單一摘要模式
             const container = document.getElementById('summary-container');
             container.innerHTML = `
                 <div class="prose prose-sm max-w-none">
@@ -2179,57 +2040,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             `;
         }
 
-        function renderAllSummarySkeleton() {
-            const container = document.getElementById('summary-container');
-            container.innerHTML = `
-                <div id="summary-all" class="space-y-4">
-                    ${renderSummarySkeletonBlock('full')}
-                    ${renderSummarySkeletonBlock('key_points')}
-                </div>
-            `;
-        }
-
-        function renderSummarySkeletonBlock(mode) {
-            const title = summaryTitle(mode);
-            return `
-                <div id="summary-box-${mode}">
-                    <div class="border border-emerald-100 rounded-lg p-4 bg-white">
-                        <div class="text-sm font-semibold text-slate-900 mb-2">${title}</div>
-                        <div class="w-full h-24 bg-slate-50 rounded animate-pulse"></div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function renderSummaryBox(mode, content) {
-            const title = summaryTitle(mode);
-            const box = document.getElementById(`summary-box-${mode}`);
-            const html = `
-                <div class="border border-emerald-100 rounded-lg p-4 bg-white">
-                    <div class="text-sm font-semibold text-slate-900 mb-2">${title}</div>
-                    <div class="bg-slate-50 p-3 rounded border border-emerald-100 text-slate-900 text-sm leading-relaxed whitespace-pre-wrap break-words" style="word-break:break-word;overflow-wrap:break-word;">${escapeHtml(content)}</div>
-                </div>
-            `;
-
-            const container = document.getElementById('summary-all');
-            if (!container) return;
-
-            if (box) {
-                box.outerHTML = `<div id="summary-box-${mode}">${html}</div>`;
-            } else {
-                const wrapper = document.createElement('div');
-                wrapper.id = `summary-box-${mode}`;
-                wrapper.innerHTML = html;
-                const ref = document.querySelector(`#summary-all`);
-                ref.appendChild(wrapper);
-            }
-        }
-
         // ── 匯出操作 ────────────────────────────────────
         function hasCachedSummaryForMode(mode) {
-            if (mode === 'all') {
-                return Boolean(summaryCache.full && summaryCache.key_points);
-            }
             return Boolean(summaryCache[mode]);
         }
 
@@ -2246,7 +2058,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 _pendingStartAfterExport = false;
                 return;
             }
-            const hasSummary = !!(summaryCache.full || summaryCache.key_points || summaryCache.all);
+            const hasSummary = !!summaryCache.full;
             if (!hasSummary) {
                 showToast('將只匯出逐字稿，如需摘要請先點擊摘要按鈕');
             } else {
@@ -2259,23 +2071,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 meeting_name: meetingName,
                 transcript_override: transcriptText,
                 summary_full: summaryCache.full || '',
-                summary_key: summaryCache.key_points || '',
-                summary_all: summaryCache.all || '',
             });
         }
 
-        function toggleExportSummaryMenu() {
-            const menu = document.getElementById('export-summary-menu');
-            if (menu) menu.classList.toggle('hidden');
-        }
-
-        function closeExportSummaryMenu() {
-            const menu = document.getElementById('export-summary-menu');
-            if (menu) menu.classList.add('hidden');
-        }
-
         function exportSummary(mode) {
-            closeExportSummaryMenu();
             const meetingName = document.getElementById('meeting-name').value.trim();
             const transcriptText = getTranscriptForSummary();
             if (!transcriptText) {
@@ -2293,8 +2092,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 mode: mode,
                 transcript_override: transcriptText,
                 summary_full: summaryCache.full || '',
-                summary_key: summaryCache.key_points || '',
-                summary_action: summaryCache.action_items || '',
             });
         }
 
@@ -2387,12 +2184,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 }
             });
         }
-
-        // 點選下拉選單外部時關閉
-        document.addEventListener('click', (e) => {
-            const wrap = document.getElementById('export-summary-wrap');
-            if (wrap && !wrap.contains(e.target)) closeExportSummaryMenu();
-        });
 
         const langSelectEl = document.getElementById('lang-select');
         if (langSelectEl) {

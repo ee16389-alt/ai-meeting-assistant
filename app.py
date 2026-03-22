@@ -43,8 +43,6 @@ from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
 from cognition import (
     summarize_full,
-    summarize_key_points,
-    summarize_all_in_one,
     check_health,
     summary_engine_status,
 )
@@ -501,8 +499,6 @@ def handle_export(data):
     transcript_override = data.get("transcript_override", "").strip()
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
-        "key_points": data.get("summary_key", "").strip(),
-        "all": data.get("summary_all", "").strip(),
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -517,8 +513,6 @@ def handle_export_summary(data):
     transcript_override = data.get("transcript_override", "").strip()
     summary_overrides = {
         "full": data.get("summary_full", "").strip(),
-        "key_points": data.get("summary_key", "").strip(),
-        "all": data.get("summary_all", "").strip(),
     }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
@@ -560,33 +554,41 @@ def _finish_transcription(sid: str, token: str):
     print(f"[Stop] _finish_transcription 開始", flush=True)
 
     # 取走等待 flush 的 stream（由 request_stop 存放）
+    t_take = time.time()
     flush_stream = stt.take_pending_flush_stream()
+    print(f"[Stop] take_pending_flush_stream 耗時 {(time.time()-t_take)*1000:.0f}ms", flush=True)
     if flush_stream is None:
         print(f"[Stop] 無待 flush stream，直接結束 ({time.time()-t0:.2f}s)", flush=True)
+        socketio.emit("transcription_ready", {}, room=sid)
         return
 
-    print(f"[Stop] 開始 flush_stream（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
+    print(f"[Stop] 啟動 _do_flush thread（timeout={_FINISH_TRANSCRIPTION_TIMEOUT}s）", flush=True)
     t1 = time.time()
     flush_done = threading.Event()
 
     def _do_flush():
+        t_flush = time.time()
+        print(f"[Stop] _do_flush thread 開始（距 stop 呼叫 {time.time()-t0:.2f}s）", flush=True)
         try:
             stt._flush_stream(flush_stream)
         except Exception as e:
             print(f"[Stop] flush_stream 例外: {e}", flush=True)
         finally:
+            print(f"[Stop] _do_flush thread 結束，耗時 {time.time()-t_flush:.2f}s", flush=True)
             flush_done.set()
 
     flush_thread = threading.Thread(target=_do_flush, daemon=True, name="stt-flush")
     flush_thread.start()
+    print(f"[Stop] flush thread 已啟動，開始 Event.wait(timeout={_FINISH_TRANSCRIPTION_TIMEOUT})", flush=True)
 
     completed = flush_done.wait(timeout=_FINISH_TRANSCRIPTION_TIMEOUT)
     if not completed:
         print(f"[Stop] flush_stream 超時（>{_FINISH_TRANSCRIPTION_TIMEOUT}s），強制放棄", flush=True)
     else:
-        print(f"[Stop] flush_stream 完成 ({time.time()-t1:.2f}s)", flush=True)
+        print(f"[Stop] Event.wait 結束，flush 總耗時 {time.time()-t1:.2f}s", flush=True)
 
-    print(f"[Stop] _finish_transcription 總耗時 {time.time()-t0:.2f}s", flush=True)
+    print(f"[Stop] _finish_transcription 總耗時 {time.time()-t0:.2f}s，emit transcription_ready", flush=True)
+    socketio.emit("transcription_ready", {}, room=sid)
 
 
 # n_ctx=4096，扣除 system prompt(~300) + 輸出(512)，可用 input ≈ 3284 tokens ≈ 2100 中文字
@@ -676,33 +678,6 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             "- 其他：依內容自行判斷最清楚的結構\n\n"
             f"{_EXTRACTION_RULES}"
         )
-    elif mode == "key_points":
-        system_prompt = (
-            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
-            f"{_STT_CORRECTION_HINT}"
-            "你是一位專業會議記錄分析師。請根據逐字稿，以台灣繁體中文條列本次會議的重點，嚴禁出現簡體字。\n\n"
-            "輸出 3 到 7 個重點，每點一行，以「-」開頭，簡潔說明核心討論、共識或結論。\n"
-            "根據會議內容決定呈現哪些重點。\n"
-            "若逐字稿中有明確提到待辦事項、後續行動或指派任務，在重點條列結尾加入以下區塊：\n"
-            "【待辦事項】\n"
-            "- [ ] 具體行動\n"
-            "若無明確待辦事項則不輸出此區塊。\n\n"
-            f"{_EXTRACTION_RULES}"
-        )
-    elif mode == "all":
-        system_prompt = (
-            "【語言規定】全程使用台灣繁體中文輸出，嚴禁出現任何簡體字，若發現自己輸出簡體字請立即改為對應繁體字。\n\n"
-            f"{_STT_CORRECTION_HINT}"
-            "你是一位專業會議記錄分析師暨專案經理。請根據逐字稿，以台灣繁體中文輸出【全文摘要】與【重點條列】兩個區塊，嚴禁出現簡體字。\n\n"
-            "請根據會議類型自行選擇最合適的結構輸出，例如：\n"
-            "- 決策型：說明背景、列出決議與待辦\n"
-            "- 討論型：摘要各方觀點、共識與未決議題\n"
-            "- 技術型：說明問題、解法方向與後續行動\n"
-            "- 報告型：摘要報告重點與回應意見\n"
-            "- 其他：依內容自行判斷最清楚的結構\n"
-            "重點條列中，重要決議標註[決議]，待辦事項標註[待辦]，未解決問題標註[問題]。\n\n"
-            f"{_EXTRACTION_RULES}"
-        )
 
     # ── 診斷 log ──────────────────────────────────────────
     char_count = len(full_text)
@@ -723,20 +698,6 @@ def _generate_summary(mode: str, full_text: str, sid: str):
             final_max_tokens = 256
         else:
             final_max_tokens = 384
-    elif mode == "key_points":
-        if char_count <= 500:
-            final_max_tokens = 256
-        elif char_count <= 1500:
-            final_max_tokens = 384
-        else:
-            final_max_tokens = 512
-    elif mode == "all":
-        if char_count <= 500:
-            final_max_tokens = 384
-        elif char_count <= 1500:
-            final_max_tokens = 512
-        else:
-            final_max_tokens = 640
     else:
         final_max_tokens = int(os.environ.get("AMA_LLM_MAX_TOKENS", "512"))
     print(f"[Summary] {mode} mode max_tokens={final_max_tokens}（逐字稿 {char_count} 字）", flush=True)
@@ -872,8 +833,6 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
     # 判斷是否有摘要：有則各模式分別寫入獨立檔案，無則只匯出逐字稿
     cached = summary_overrides or {}
     summary_full = cached.get("full", "").strip()
-    summary_key = cached.get("key_points", "").strip()
-    summary_all = cached.get("all", "").strip()
 
     def _build_summary_file(title: str, content: str) -> str:
         lines = [
@@ -886,22 +845,11 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
         ]
         return "\n".join(lines)
 
-    # 每個有內容的模式對應一個檔名
     summary_files: list[tuple[str, str]] = []  # (path, content)
     if summary_full:
         summary_files.append((
             os.path.join(_meeting_output_dir(meeting_name), "summary_full.txt"),
             _build_summary_file("【全文摘要】", summary_full),
-        ))
-    if summary_key:
-        summary_files.append((
-            os.path.join(_meeting_output_dir(meeting_name), "summary_key_points.txt"),
-            _build_summary_file("【重點條列】", summary_key),
-        ))
-    if summary_all:
-        summary_files.append((
-            os.path.join(_meeting_output_dir(meeting_name), "summary_all.txt"),
-            _build_summary_file("【全部摘要】", summary_all),
         ))
 
     # 寫入檔案（目標資料夾不存在時自動建立）
@@ -948,16 +896,13 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
         )
 
     cached = summary_overrides or {}
-    # 判斷是否有足夠的快取內容直接使用
-    has_cache = any(cached.get(k) for k in ("full", "key_points"))
+    has_cache = bool(cached.get("full"))
 
     summary_content = ""
     if has_cache or full_text.strip():
         if not has_cache:
-            # 快取不足時才執行 LLM 推論
             try:
-                combo = summarize_all_in_one(full_text)
-                cached = {"full": combo["full"], "key_points": combo["key_points"]}
+                cached = {"full": summarize_full(full_text)}
             except Exception as e:
                 socketio.emit("error", {"message": f"摘要生成失敗，無法匯出：{e}"})
                 return
@@ -967,21 +912,15 @@ def _export_summary(meeting_name: str, mode: str, transcript_override: str = "",
         summary_lines.append(f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}")
         summary_lines.append("=" * 50)
         summary_lines.append("")
-
-        if mode in ("full", "all") and cached.get("full"):
-            summary_lines.append("【全文摘要】")
-            summary_lines.append(cached["full"])
-            summary_lines.append("")
-        if mode in ("key_points", "all") and cached.get("key_points"):
-            summary_lines.append("【重點條列】")
-            summary_lines.append(cached["key_points"])
-            summary_lines.append("")
+        summary_lines.append("【全文摘要】")
+        summary_lines.append(cached["full"])
+        summary_lines.append("")
 
         summary_content = "\n".join(summary_lines)
     else:
         summary_content = "尚無內容可供匯出"
 
-    mode_suffix = {"full": "full", "key_points": "key_points", "all": "all"}.get(mode, mode)
+    mode_suffix = "full"
     export_dir = _meeting_output_dir(meeting_name)
     os.makedirs(export_dir, exist_ok=True)
     summary_filename = f"summary_{mode_suffix}.txt"
