@@ -3,14 +3,20 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('templates', 'templates'), ('static', 'static')]
 binaries = []
-hiddenimports = ['engineio.async_drivers.threading', 'simple_websocket', 'llama_cpp']
+hiddenimports = [
+    'flask',
+    'flask_socketio',
+    'socketio',
+    'engineio',
+    'engineio.async_drivers.threading',
+    'simple_websocket',
+    'llama_cpp',
+]
 tmp_ret = collect_all('llama_cpp')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('opencc')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('faster_whisper')
-datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
-tmp_ret = collect_all('ctranslate2')
+tmp_ret = collect_all('sherpa_onnx')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
@@ -54,10 +60,4 @@ coll = COLLECT(
     upx=True,
     upx_exclude=[],
     name='ai_meeting_backend',
-)
-app = BUNDLE(
-    coll,
-    name='ai_meeting_backend.app',
-    icon=None,
-    bundle_identifier=None,
 )
