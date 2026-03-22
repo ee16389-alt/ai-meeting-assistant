@@ -27,6 +27,7 @@ def main():
     run([
         "pyinstaller",
         "--clean",
+        "--noconfirm",
         "--onedir",
         "--noconsole",
         "--name", "ai_meeting_backend",
