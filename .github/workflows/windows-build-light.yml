@@ -29,9 +29,10 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          # Install all deps except llama-cpp-python first
-          $reqs = Get-Content requirements.txt | Where-Object { $_ -and ($_ -notmatch '^\s*llama') }
-          if ($reqs) { python -m pip install @reqs }
+          # Install all deps except llama-cpp-python (write temp file so pip handles comments natively)
+          Get-Content requirements.txt | Where-Object { $_ -notmatch '^\s*llama' } | Set-Content requirements_nollama.txt
+          python -m pip install -r requirements_nollama.txt
+          Remove-Item requirements_nollama.txt
           python -m pip install pyinstaller
           # Build llama-cpp-python with AVX2 enabled for modern CPUs (12th Gen Intel+, Ryzen 3000+)
           # --no-binary forces source build so CMAKE_ARGS are actually applied
