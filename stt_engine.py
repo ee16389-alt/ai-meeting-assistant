@@ -190,7 +190,7 @@ class STTEngine:
         self._sample_buffer = np.array([], dtype=np.float32)
 
         # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
-        self._audio_queue: queue.Queue = queue.Queue(maxsize=300)
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=1000)
         self._worker_thread = threading.Thread(
             target=self._worker_loop, daemon=True, name="stt-worker"
         )
@@ -241,7 +241,7 @@ class STTEngine:
             decoder=decoder,
             joiner=joiner,
             tokens=tokens,
-            num_threads=2,
+            num_threads=4,
             sample_rate=self.SAMPLE_RATE,
             feature_dim=80,
             decoding_method="greedy_search",
@@ -263,7 +263,7 @@ class STTEngine:
             encoder=encoder,
             decoder=decoder,
             tokens=tokens,
-            num_threads=2,
+            num_threads=4,
             sample_rate=self.SAMPLE_RATE,
             feature_dim=80,
             decoding_method="greedy_search",
@@ -478,9 +478,15 @@ class STTEngine:
             reason = "endpoint" if is_ep else "stale_timeout"
             # 保存觸發 endpoint 的 window，reset 後回放以補救段落邊界漏字
             boundary_chunk = samples.copy()
-            # 加 1.5s padding 確保 encoder buffer + right_context 完整刷出
-            tail = np.zeros(int(1.5 * self.SAMPLE_RATE), dtype=np.float32)
-            stream.accept_waveform(self.SAMPLE_RATE, tail)
+            # 嘗試 finalize_decoding（低延遲，無需餵靜音）；
+            # 不支援時僅補 80ms 靜音（< 1 Zipformer chunk = 無額外 decode 開銷），
+            # 避免原本 1.5s 靜音 × 多次 decode 在慢機器上造成 ~500ms 阻塞，
+            # 最終導致 worker queue 在約 57 秒後塞滿、新音訊全部丟棄。
+            try:
+                self._recognizer.finalize_decoding(stream)
+            except Exception:
+                tail = np.zeros(int(0.08 * self.SAMPLE_RATE), dtype=np.float32)
+                stream.accept_waveform(self.SAMPLE_RATE, tail)
             while self._recognizer.is_ready(stream):
                 self._recognizer.decode_stream(stream)
             final_result = self._recognizer.get_result(stream)
