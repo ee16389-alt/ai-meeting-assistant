@@ -91,11 +91,16 @@ def _load_model_pack_config() -> dict:
 
 
 def _has_encoder(p: Path) -> bool:
-    return (p / "encoder.int8.onnx").exists() or (p / "encoder.onnx").exists()
+    """偵測目錄是否含有 encoder 模型檔（支援 Paraformer 和 Zipformer 兩種命名格式）。"""
+    # Paraformer 固定命名：encoder.int8.onnx / encoder.onnx
+    if (p / "encoder.int8.onnx").exists() or (p / "encoder.onnx").exists():
+        return True
+    # Zipformer/Transducer 含版本號命名：encoder-epoch-*.onnx
+    return any(p.glob("encoder-*.onnx"))
 
 
 def _find_sherpa_model_dir() -> Path | None:
-    """尋找本地 Sherpa-ONNX 模型目錄（含 encoder.int8.onnx 或 encoder.onnx）"""
+    """尋找本地 Sherpa-ONNX 模型目錄（支援 Paraformer 與 Zipformer/Transducer）"""
     env_dir = os.environ.get("AMA_SHERPA_DIR", "").strip()
     if env_dir:
         p = Path(env_dir).expanduser()
@@ -105,7 +110,7 @@ def _find_sherpa_model_dir() -> Path | None:
     cfg = _load_model_pack_config()
     model_dir_name = str(cfg.get(
         "sherpaModelDirName",
-        "sherpa-onnx-streaming-paraformer-bilingual-zh-en"
+        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
     )).strip()
 
     candidates: list[Path] = []
@@ -190,31 +195,75 @@ class STTEngine:
             target=self._worker_loop, daemon=True, name="stt-worker"
         )
         self._worker_thread.start()
-        print("[STT] Sherpa-ONNX Paraformer 模型載入完成", flush=True)
+        print("[STT] Sherpa-ONNX 串流模型載入完成", flush=True)
 
     def _create_recognizer(self) -> "sherpa_onnx.OnlineRecognizer":
         local_dir = _find_sherpa_model_dir()
         if not local_dir:
             raise RuntimeError(
                 "找不到 Sherpa-ONNX 模型目錄，請確認模型已安裝\n"
-                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-paraformer-bilingual-zh-en）"
+                "（預期目錄：models/sherpa-onnx/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20）"
             )
-
-        encoder = str(local_dir / "encoder.int8.onnx")
-        decoder = str(local_dir / "decoder.int8.onnx")
-        if not Path(encoder).exists():
-            encoder = str(local_dir / "encoder.onnx")
-            decoder = str(local_dir / "decoder.onnx")
-        tokens = str(local_dir / "tokens.txt")
-
-        num_threads = 2
-
         print(f"[STT] 使用本地模型: {local_dir}", flush=True)
+        # 偵測模型類型：含 joiner 檔案 → Transducer（Zipformer）；否則 → Paraformer
+        is_transducer = any(local_dir.glob("joiner*.onnx")) or any(local_dir.glob("joiner-*.onnx"))
+        if is_transducer:
+            return self._create_transducer_recognizer(local_dir)
+        return self._create_paraformer_recognizer(local_dir)
+
+    @staticmethod
+    def _find_model_file(model_dir: Path, prefix: str) -> str:
+        """在模型目錄中找指定前綴的 ONNX 檔，優先選 int8 量化版。"""
+        # 先找固定命名（Paraformer 格式）
+        for suffix in (".int8.onnx", ".onnx"):
+            p = model_dir / f"{prefix}{suffix}"
+            if p.exists():
+                return str(p)
+        # 再找帶版本號命名（Zipformer 格式：prefix-epoch-*.int8.onnx）
+        for suffix in (".int8.onnx", ".onnx"):
+            candidates = sorted(model_dir.glob(f"{prefix}-*{suffix}"))
+            if candidates:
+                return str(candidates[0])
+        return ""
+
+    def _create_transducer_recognizer(self, local_dir: Path) -> "sherpa_onnx.OnlineRecognizer":
+        """建立 Zipformer Transducer 串流辨識器（from_transducer API）。"""
+        encoder = self._find_model_file(local_dir, "encoder")
+        decoder = self._find_model_file(local_dir, "decoder")
+        joiner  = self._find_model_file(local_dir, "joiner")
+        tokens  = str(local_dir / "tokens.txt")
+        print(f"[STT] 模型類型: Zipformer Transducer", flush=True)
+        print(f"[STT]   encoder={Path(encoder).name}", flush=True)
+        print(f"[STT]   decoder={Path(decoder).name}", flush=True)
+        print(f"[STT]   joiner ={Path(joiner).name}", flush=True)
+        return sherpa_onnx.OnlineRecognizer.from_transducer(
+            encoder=encoder,
+            decoder=decoder,
+            joiner=joiner,
+            tokens=tokens,
+            num_threads=2,
+            sample_rate=self.SAMPLE_RATE,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            enable_endpoint_detection=True,
+            rule1_min_trailing_silence=2.4,
+            rule2_min_trailing_silence=0.8,
+            rule3_min_utterance_length=10,
+        )
+
+    def _create_paraformer_recognizer(self, local_dir: Path) -> "sherpa_onnx.OnlineRecognizer":
+        """建立 Paraformer 串流辨識器（from_paraformer API）。"""
+        encoder = self._find_model_file(local_dir, "encoder")
+        decoder = self._find_model_file(local_dir, "decoder")
+        tokens  = str(local_dir / "tokens.txt")
+        print(f"[STT] 模型類型: Paraformer", flush=True)
+        print(f"[STT]   encoder={Path(encoder).name}", flush=True)
+        print(f"[STT]   decoder={Path(decoder).name}", flush=True)
         return sherpa_onnx.OnlineRecognizer.from_paraformer(
             encoder=encoder,
             decoder=decoder,
             tokens=tokens,
-            num_threads=num_threads,
+            num_threads=2,
             sample_rate=self.SAMPLE_RATE,
             feature_dim=80,
             decoding_method="greedy_search",
