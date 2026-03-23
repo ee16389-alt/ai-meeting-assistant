@@ -156,7 +156,7 @@ def _on_stt_partial(text: str):
     sid = _active_sid
     if not sid:
         return
-    socketio.emit("transcript_partial", {"text": text}, room=sid)
+    socketio.emit("partial_transcript", {"text": text, "is_partial": True}, room=sid)
 
 
 def _init_stt_background():
@@ -449,7 +449,7 @@ def handle_stop():
     stt.request_stop()
     stop_sid = _active_sid
     stop_token = _recording_token
-    socketio.emit("transcript_partial_clear", room=stop_sid)
+    socketio.emit("partial_transcript_clear", room=stop_sid)
     socketio.emit("state_changed", {"state": "idle"}, room=stop_sid)
     # 非同步 flush 剩餘音頻，不阻塞 ack 回傳
     socketio.start_background_task(_finish_transcription, stop_sid, stop_token)

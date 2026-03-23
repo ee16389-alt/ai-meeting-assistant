@@ -1157,13 +1157,13 @@
             reapplySearchIfActive();
         });
 
-        socket.on('transcript_partial', (data) => {
+        socket.on('partial_transcript', (data) => {
             if (data && data.text) {
                 showPartialLine(data.timestamp || '', data.text);
             }
         });
 
-        socket.on('transcript_partial_clear', () => {
+        socket.on('partial_transcript_clear', () => {
             clearPartialLine();
         });
 
@@ -2148,7 +2148,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 container.appendChild(div);
             }
             div.innerHTML = `
-                <p class="text-slate-900 leading-relaxed text-sm">${escapeHtml(text)}</p>
+                <p class="text-slate-400 italic leading-relaxed text-sm">${escapeHtml(text)}</p>
             `;
             container.scrollTop = container.scrollHeight;
         }
