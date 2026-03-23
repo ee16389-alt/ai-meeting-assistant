@@ -496,15 +496,54 @@ const _exportRoot = path.join(app.getPath("documents"), "AI Meeting Assistant");
 const _draftRefPath = path.join(app.getPath("userData"), "draft_ref.json");
 
 function _draftPathForMeeting(meetingName) {
-  return path.join(_exportRoot, "download", meetingName, "draft.json");
+  return path.join(_exportRoot, "download", meetingName, "draft.txt");
+}
+
+function _serializeDraft(data) {
+  const lines = data.lines || [];
+  const timestamps = data.timestamps || [];
+  const meetingName = data.meetingName || "";
+  const now = new Date().toLocaleString("zh-TW");
+  let content = `# AI 會議助理 - 逐字稿草稿\n`;
+  content += `# 會議名稱: ${meetingName}\n`;
+  content += `# 暫存時間: ${now}\n`;
+  content += `# 此檔案為自動暫存，重新開啟 app 時可選擇還原。\n\n`;
+  for (let i = 0; i < lines.length; i++) {
+    const ts = timestamps[i] || "";
+    const line = (lines[i] || "").trim();
+    if (line) content += ts ? `[${ts}] ${line}\n` : `${line}\n`;
+  }
+  return content;
+}
+
+function _parseDraft(content) {
+  const resultLines = [];
+  const resultTimestamps = [];
+  let meetingName = "";
+  for (const raw of content.split("\n")) {
+    if (raw.startsWith("# 會議名稱: ")) {
+      meetingName = raw.slice("# 會議名稱: ".length).trim();
+      continue;
+    }
+    if (raw.startsWith("#") || !raw.trim()) continue;
+    const m = raw.match(/^\[(\d{2}:\d{2}:\d{2})\] (.+)$/);
+    if (m) {
+      resultTimestamps.push(m[1]);
+      resultLines.push(m[2]);
+    } else if (raw.trim()) {
+      resultTimestamps.push("");
+      resultLines.push(raw.trim());
+    }
+  }
+  return resultLines.length ? { lines: resultLines, timestamps: resultTimestamps, meetingName } : null;
 }
 
 ipcMain.handle("draft:save", async (_event, data) => {
   try {
     const meetingName = (data && data.meetingName) ? data.meetingName.trim() : "";
-    const p = meetingName ? _draftPathForMeeting(meetingName) : path.join(app.getPath("userData"), "draft.json");
+    const p = meetingName ? _draftPathForMeeting(meetingName) : path.join(app.getPath("userData"), "draft.txt");
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify(data), "utf8");
+    fs.writeFileSync(p, _serializeDraft(data), "utf8");
     fs.writeFileSync(_draftRefPath, JSON.stringify({ path: p }), "utf8");
     return true;
   } catch (_) { return false; }
@@ -515,7 +554,9 @@ ipcMain.handle("draft:load", async () => {
     if (fs.existsSync(_draftRefPath)) {
       const ref = JSON.parse(fs.readFileSync(_draftRefPath, "utf8"));
       if (ref && ref.path && fs.existsSync(ref.path)) {
-        return JSON.parse(fs.readFileSync(ref.path, "utf8"));
+        const content = fs.readFileSync(ref.path, "utf8");
+        // 支援新版 txt 格式與舊版 json 格式
+        return ref.path.endsWith(".json") ? JSON.parse(content) : _parseDraft(content);
       }
     }
     // 向下相容：舊版 draft.json 放在 userData
@@ -533,8 +574,10 @@ ipcMain.handle("draft:clear", async () => {
       fs.unlinkSync(_draftRefPath);
     }
     // 清除舊版 legacy draft
-    const legacy = path.join(app.getPath("userData"), "draft.json");
-    if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
+    for (const name of ["draft.json", "draft.txt"]) {
+      const p = path.join(app.getPath("userData"), name);
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    }
   } catch (_) {}
   return true;
 });
