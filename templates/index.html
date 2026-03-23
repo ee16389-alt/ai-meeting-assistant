@@ -1709,12 +1709,27 @@
                     audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 }
 
+                // 監聽麥克風 track 結束（音訊裝置切換或斷線時觸發）
+                audioStream.getTracks().forEach(track => {
+                    track.onended = () => {
+                        console.warn('[Audio] 麥克風 track 已結束，停止錄音');
+                        if (isRecording) stopRecording();
+                    };
+                });
+
                 if (!audioContext) {
                     const AudioCtx = window.AudioContext || window.webkitAudioContext;
                     // 先不指定取樣率建立 Context，取得硬體原始取樣率
                     audioContext = new AudioCtx();
                     audioSourceNode = null;
                     processor = null;
+                    // 監聽 AudioContext 狀態變化（裝置切換時可能 suspend）
+                    audioContext.onstatechange = () => {
+                        console.log('[Audio] AudioContext 狀態:', audioContext.state);
+                        if (audioContext.state === 'interrupted' || audioContext.state === 'suspended') {
+                            if (isRecording) audioContext.resume().catch(() => null);
+                        }
+                    };
                 }
 
                 if (audioContext.state === 'suspended') {
@@ -1733,9 +1748,13 @@
 class PCMCaptureProcessor extends AudioWorkletProcessor {
     constructor() { super(); this._buf = []; }
     process(inputs) {
-        const ch = inputs[0] && inputs[0][0];
-        if (ch) for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
-        if (this._buf.length >= 4096) this.port.postMessage(new Float32Array(this._buf.splice(0, 4096)));
+        try {
+            const ch = inputs[0] && inputs[0][0];
+            if (ch) for (let i = 0; i < ch.length; i++) this._buf.push(ch[i]);
+            if (this._buf.length >= 4096) this.port.postMessage(new Float32Array(this._buf.splice(0, 4096)));
+        } catch(e) {
+            this.port.postMessage({ error: e.message });
+        }
         return true;
     }
 }
@@ -1747,6 +1766,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
                     processor = new AudioWorkletNode(audioContext, 'pcm-capture-processor');
                     processor.port.onmessage = (e) => {
+                        if (e.data && e.data.error) {
+                            console.error('[AudioWorklet] 處理器錯誤:', e.data.error);
+                            return;
+                        }
                         if (!isRecording || !recordingSessionReady || !socket.connected) return;
                         const input = e.data;
                         // 強制降頻至 16000 Hz
