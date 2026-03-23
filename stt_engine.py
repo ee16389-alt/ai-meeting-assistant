@@ -159,7 +159,7 @@ def _find_sherpa_model_dir() -> Path | None:
 
 class STTEngine:
     SAMPLE_RATE = 16000
-    SILENCE_THRESHOLD = 0.003  # VAD 靜音門檻（RMS）
+    SILENCE_THRESHOLD = 0.003  # VAD 靜音門檻（RMS）— 僅用於 log，不再跳過靜音
     CHUNK_SAMPLES = 480         # 30ms @ 16kHz
 
     def __init__(self, model_size: str = "base"):
@@ -188,6 +188,10 @@ class STTEngine:
 
         # 20ms chunk buffer：累積 samples 後以 320 個為單位送 Sherpa
         self._sample_buffer = np.array([], dtype=np.float32)
+
+        # 診斷計數器
+        self._window_count = 0          # _process_window 總呼叫次數
+        self._silent_window_count = 0   # VAD 判定靜音的次數
 
         # 背景 worker：避免 decode() 阻塞 SocketIO 事件執行緒
         self._audio_queue: queue.Queue = queue.Queue(maxsize=1000)
@@ -374,6 +378,8 @@ class STTEngine:
             self._current_speaker = 1
             self._time_offset_sec = 0.0
             self._sample_buffer = np.array([], dtype=np.float32)
+            self._window_count = 0
+            self._silent_window_count = 0
             self._state = State.IDLE
         # 清空 audio queue（鎖外執行，避免與 worker thread 競態）
         drained = 0
@@ -444,16 +450,22 @@ class STTEngine:
             self._process_window(window, stream)
 
     def _process_window(self, samples: np.ndarray, stream) -> None:
-        """處理單一 20ms 音訊窗口：VAD → Sherpa decode → endpoint/stale 判斷"""
+        """處理單一 30ms 音訊窗口：VAD log → Sherpa decode → endpoint/stale 判斷"""
         rms = float(np.sqrt(np.mean(np.square(samples))))
         with self._lock:
             self._last_audio_rms = rms
+            self._window_count += 1
+            wc = self._window_count
+            is_silent = rms < self.SILENCE_THRESHOLD
+            if is_silent:
+                self._silent_window_count += 1
+            sc = self._silent_window_count
 
-        # VAD：RMS 低於門檻，靜音跳過，不送 Sherpa
-        if rms < self.SILENCE_THRESHOLD:
-            return
+        # 診斷：每 100 個 window 印一次 RMS 統計
+        if wc % 100 == 1:
+            print(f"[STT] window #{wc}: rms={rms:.5f} (threshold={self.SILENCE_THRESHOLD}) silent_so_far={sc}/{wc}", flush=True)
 
-        # 送入串流辨識器並解碼
+        # 送入串流辨識器並解碼（靜音也送入，維持 Transducer 時間軸）
         stream.accept_waveform(self.SAMPLE_RATE, samples)
         while self._recognizer.is_ready(stream):
             self._recognizer.decode_stream(stream)
