@@ -24,8 +24,10 @@ except Exception as _e:
 try:
     import opencc  # type: ignore
     _s2twp = opencc.OpenCC("s2twp")
-except Exception:
+    print("[STT] OpenCC 初始化成功（簡體→繁體）", flush=True)
+except Exception as _occ_e:
     _s2twp = None
+    print(f"[STT] OpenCC 初始化失敗，將輸出簡體字: {_occ_e}", flush=True)
 
 
 def _to_traditional(text: str) -> str:
@@ -185,7 +187,7 @@ class STTEngine:
         # 時間 fallback：偵測文字停止變化
         self._last_seen_text = ""
         self._last_text_change_time = 0.0
-        self._TEXT_STALE_TIMEOUT = 1.5  # 文字超過 1.5 秒沒變化 → 強制輸出
+        self._TEXT_STALE_TIMEOUT = 1.0  # 文字超過 1.0 秒沒變化 → 強制輸出
 
         # 20ms chunk buffer：累積 samples 後以 320 個為單位送 Sherpa
         self._sample_buffer = np.array([], dtype=np.float32)
@@ -252,9 +254,9 @@ class STTEngine:
             feature_dim=80,
             decoding_method="greedy_search",
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=2.4,
-            rule2_min_trailing_silence=0.8,
-            rule3_min_utterance_length=10,
+            rule1_min_trailing_silence=1.4,
+            rule2_min_trailing_silence=0.6,
+            rule3_min_utterance_length=20,
         )
 
     def _create_paraformer_recognizer(self, local_dir: Path) -> "sherpa_onnx.OnlineRecognizer":
@@ -274,9 +276,9 @@ class STTEngine:
             feature_dim=80,
             decoding_method="greedy_search",
             enable_endpoint_detection=True,
-            rule1_min_trailing_silence=2.4,
-            rule2_min_trailing_silence=0.8,
-            rule3_min_utterance_length=10,
+            rule1_min_trailing_silence=1.4,
+            rule2_min_trailing_silence=0.6,
+            rule3_min_utterance_length=20,
         )
 
     # ── 屬性 ──────────────────────────────────────────────
