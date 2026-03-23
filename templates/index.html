@@ -2228,6 +2228,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         }
 
         function requestSummary(mode, forceRegenerate = false) {
+            if (!socket.connected) {
+                showToast(t('conn_connecting'));
+                return;
+            }
             if (currentState === 'recording' || currentState === 'paused') {
                 showToast(t('alert_summary_blocked_recording'));
                 return;

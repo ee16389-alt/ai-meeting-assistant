@@ -689,6 +689,15 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
 
 def _generate_summary(mode: str, full_text: str, sid: str):
     """背景生成摘要（支援串流）"""
+    try:
+        _generate_summary_inner(mode, full_text, sid)
+    except Exception as e:
+        print(f"[Summary] _generate_summary 未預期例外: {type(e).__name__}: {e}", flush=True)
+        socketio.emit("summary_error", {"mode": mode, "message": f"摘要產生中斷，請重試"}, room=sid)
+
+
+def _generate_summary_inner(mode: str, full_text: str, sid: str):
+    """背景生成摘要（支援串流）- 內部實作"""
     global _summary_cancelled
     with _summary_cancelled_lock:
         _summary_cancelled = False
