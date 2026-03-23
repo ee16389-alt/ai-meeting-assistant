@@ -471,7 +471,7 @@ def handle_resume():
 
 
 @socketio.on("stop_recording")
-def handle_stop():
+def handle_stop(data=None):
     if stt.state == "error":
         emit("state_changed", {"state": "error"})
         return {"ok": False, "state": "error", "error": _stt_init_error or "未知錯誤"}
