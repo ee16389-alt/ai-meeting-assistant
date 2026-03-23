@@ -262,7 +262,7 @@
                             <i data-lucide="search" class="w-4 h-4 text-orange-500"></i> <span data-i18n="search">搜尋</span>
                         </button>
                         <button id="fulltext-edit-btn" onclick="openFullTextEditor()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
-                            <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span>編輯全文</span>
+                            <i data-lucide="file-pen-line" class="w-4 h-4 text-orange-500"></i> <span data-i18n="edit_fulltext">編輯全文</span>
                         </button>
                         <button id="export-transcript-btn" onclick="exportMeeting()" class="flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
                             <i data-lucide="download" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_transcript">匯出逐字稿</span>
@@ -293,7 +293,7 @@
                     <div class="flex items-center justify-between px-4 py-2 border-b border-orange-200 bg-orange-50 flex-shrink-0">
                         <span class="text-xs text-orange-600 font-mono">格式：HH:MM:SS 內容（可直接刪除或修改任意行）</span>
                         <div class="flex gap-2">
-                            <button onclick="cancelFullTextEdit()" class="px-3 py-1 text-sm rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-all">取消</button>
+                            <button onclick="cancelFullTextEdit()" class="px-3 py-1 text-sm rounded-lg border border-slate-300 bg-white text-slate-600 hover:bg-slate-50 transition-all" data-i18n="cancel">取消</button>
                             <button onclick="saveFullTextEdit()" class="px-3 py-1 text-sm rounded-lg bg-orange-500 hover:bg-orange-400 text-white font-medium transition-all">儲存</button>
                         </div>
                     </div>
@@ -331,7 +331,7 @@
                 <div id="summary-progress-row" style="display:none; flex-direction:column; gap:4px; padding:6px 20px 8px; background:#fff7ed; border-bottom:1px solid #fed7aa;">
                     <div style="display:flex; align-items:center; gap:8px;">
                         <span id="summary-progress-label" class="text-xs text-orange-600 font-medium" style="flex:1;"></span>
-                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;">取消</button>
+                        <button onclick="cancelSummary()" class="text-xs px-2.5 py-1 rounded-lg font-medium bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 transition-all" style="flex-shrink:0;" data-i18n="cancel">取消</button>
                     </div>
                     <div style="height:4px; background:#fed7aa; border-radius:2px; overflow:hidden;">
                         <div id="summary-progress-bar" style="height:100%; background:#f97316; border-radius:2px; width:0%; transition:width 0.4s ease;"></div>
@@ -596,7 +596,7 @@
                 guide_10_h: '摘要字數提示',
                 guide_10_b: '生成摘要前會顯示逐字稿字數，讓你預估等待時間。',
                 guide_11_h: '自動儲存草稿',
-                guide_11_b: '系統每 30 秒自動儲存草稿，意外關閉後重新開啟可選擇還原上次的會議記錄。',
+                guide_11_b: '系統每 30 秒自動儲存草稿至會議資料夾（與逐字稿存放在同一位置），意外關閉後重新開啟可選擇還原上次的會議記錄。',
                 guide_tip: '建議：正式會議前先做 1 次 30 秒測試錄音，確認麥克風、模型與匯出流程正常。',
                 contact_us: '聯絡我們',
                 storage_path_label: '目前存放位置：',
@@ -628,6 +628,13 @@
                 word_count_hint: '逐字稿共 {n} 字',
                 draft_restore_prompt: '發現上次未儲存的會議記錄，是否還原？',
                 draft_restore_toast: '已還原上次會議記錄',
+                edit_fulltext: '編輯全文',
+                cancel: '取消',
+                summary_finalizing: '最終整合中...',
+                summary_generating: '摘要生成中...',
+                summary_progress_chunk: '摘要生成中（{current}／{total} 段）...',
+                toast_summary_cancelled: '摘要已取消',
+                toast_summary_in_progress: '摘要生成中，請稍候完成後再點擊。',
             },
             en: {
                 app_title: 'AI Meeting Assistant',
@@ -694,7 +701,7 @@
                 guide_10_h: 'Word Count Before Summary',
                 guide_10_b: 'Word count is shown before generating summary to help estimate processing time.',
                 guide_11_h: 'Auto-Save Draft',
-                guide_11_b: 'Draft is auto-saved every 30 seconds. If the app closes unexpectedly, you can restore the previous session on next launch.',
+                guide_11_b: 'Draft is auto-saved every 30 seconds to the meeting folder (same location as the transcript file). If the app closes unexpectedly, you can restore the previous session on next launch.',
                 guide_tip: 'Tip: Before your first official meeting, run a 30-second test recording to confirm the microphone, model, and export flow are working.',
                 contact_us: 'Contact Us',
                 storage_path_label: 'Storage path:',
@@ -723,9 +730,16 @@
                 search_placeholder: 'Search keyword...',
                 search_result: '{cur} / {total}',
                 search_no_result: 'No results',
-                word_count_hint: 'Transcript: {n} chars',
+                word_count_hint: '{n} words in transcript',
                 draft_restore_prompt: 'Found unsaved meeting notes from last session. Restore?',
                 draft_restore_toast: 'Previous meeting notes restored',
+                edit_fulltext: 'Edit Full Text',
+                cancel: 'Cancel',
+                summary_finalizing: 'Finalizing...',
+                summary_generating: 'Generating summary...',
+                summary_progress_chunk: 'Generating summary ({current}/{total})...',
+                toast_summary_cancelled: 'Summary cancelled',
+                toast_summary_in_progress: 'Summary is being generated, please wait.',
             },
         };
 
@@ -1093,10 +1107,10 @@
             row.style.display = 'flex';
             bar.classList.remove('progress-indeterminate');
             if (data.stage === 'final') {
-                label.textContent = '最終整合中...';
+                label.textContent = t('summary_finalizing');
                 bar.style.width = '100%';
             } else {
-                label.textContent = `摘要生成中（${data.current}／${data.total} 段）...`;
+                label.textContent = tFormat('summary_progress_chunk', { current: data.current, total: data.total });
                 bar.style.width = `${Math.round(data.current / data.total * 100)}%`;
             }
         });
@@ -1944,7 +1958,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             const label = document.getElementById('summary-progress-label');
             const bar = document.getElementById('summary-progress-bar');
             if (row && label && bar) {
-                label.textContent = '摘要生成中...';
+                label.textContent = t('summary_generating');
                 bar.style.width = '30%';
                 bar.classList.add('progress-indeterminate');
                 row.style.display = 'flex';
@@ -1976,7 +1990,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             summaryRequestInFlight = 0;
             setTranscriptOpsLocked(false);
             _hideProgressBar();
-            showToast('摘要已取消');
+            showToast(t('toast_summary_cancelled'));
         }
 
         function clearSummaryLocksForNewRecording() {
@@ -2231,7 +2245,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             }
             summaryCache[mode] = null;
             if (summaryRequestInFlight > 0) {
-                showToast('摘要生成中，請稍候完成後再點擊。');
+                showToast(t('toast_summary_in_progress'));
                 return;
             }
             beginSummaryRequest(1);

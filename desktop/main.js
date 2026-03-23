@@ -492,24 +492,50 @@ function killBackend() {
 }
 
 // ── 草稿 IPC ───────────────────────────────────────────
-function draftFilePath() {
-  return path.join(app.getPath("userData"), "draft.json");
+const _exportRoot = path.join(app.getPath("documents"), "AI Meeting Assistant");
+const _draftRefPath = path.join(app.getPath("userData"), "draft_ref.json");
+
+function _draftPathForMeeting(meetingName) {
+  return path.join(_exportRoot, "download", meetingName, "draft.json");
 }
 
 ipcMain.handle("draft:save", async (_event, data) => {
-  try { fs.writeFileSync(draftFilePath(), JSON.stringify(data), "utf8"); return true; } catch (_) { return false; }
+  try {
+    const meetingName = (data && data.meetingName) ? data.meetingName.trim() : "";
+    const p = meetingName ? _draftPathForMeeting(meetingName) : path.join(app.getPath("userData"), "draft.json");
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(data), "utf8");
+    fs.writeFileSync(_draftRefPath, JSON.stringify({ path: p }), "utf8");
+    return true;
+  } catch (_) { return false; }
 });
 
 ipcMain.handle("draft:load", async () => {
   try {
-    const p = draftFilePath();
-    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, "utf8"));
+    if (fs.existsSync(_draftRefPath)) {
+      const ref = JSON.parse(fs.readFileSync(_draftRefPath, "utf8"));
+      if (ref && ref.path && fs.existsSync(ref.path)) {
+        return JSON.parse(fs.readFileSync(ref.path, "utf8"));
+      }
+    }
+    // 向下相容：舊版 draft.json 放在 userData
+    const legacy = path.join(app.getPath("userData"), "draft.json");
+    if (fs.existsSync(legacy)) return JSON.parse(fs.readFileSync(legacy, "utf8"));
   } catch (_) {}
   return null;
 });
 
 ipcMain.handle("draft:clear", async () => {
-  try { const p = draftFilePath(); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+  try {
+    if (fs.existsSync(_draftRefPath)) {
+      const ref = JSON.parse(fs.readFileSync(_draftRefPath, "utf8"));
+      if (ref && ref.path && fs.existsSync(ref.path)) fs.unlinkSync(ref.path);
+      fs.unlinkSync(_draftRefPath);
+    }
+    // 清除舊版 legacy draft
+    const legacy = path.join(app.getPath("userData"), "draft.json");
+    if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
+  } catch (_) {}
   return true;
 });
 
