@@ -38,6 +38,37 @@ def _configure_console_encoding() -> None:
 
 _configure_console_encoding()
 
+# ── 將 stdout/stderr 同時寫入桌面的 ama_debug.log，方便 exe 版本除錯 ──
+import pathlib, io
+_desktop = pathlib.Path.home() / "Desktop"
+_log_path = _desktop / "ama_debug.log"
+try:
+    _log_fh = open(_log_path, "w", encoding="utf-8", errors="replace", buffering=1)
+
+    class _Tee(io.TextIOBase):
+        def __init__(self, *streams):
+            self._streams = streams
+        def write(self, s):
+            for st in self._streams:
+                try:
+                    st.write(s)
+                    st.flush()
+                except Exception:
+                    pass
+            return len(s)
+        def flush(self):
+            for st in self._streams:
+                try:
+                    st.flush()
+                except Exception:
+                    pass
+
+    sys.stdout = _Tee(sys.__stdout__, _log_fh)
+    sys.stderr = _Tee(sys.__stderr__, _log_fh)
+    print(f"[LOG] 診斷 log 已開啟，路徑: {_log_path}", flush=True)
+except Exception as _e:
+    print(f"[LOG] 無法建立 log 檔: {_e}", flush=True)
+
 from flask import Flask, render_template, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from stt_engine import STTEngine
