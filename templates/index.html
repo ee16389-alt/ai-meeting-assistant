@@ -596,7 +596,7 @@
                 guide_10_h: '摘要字數提示',
                 guide_10_b: '生成摘要前會顯示逐字稿字數，讓你預估等待時間。',
                 guide_11_h: '自動儲存草稿',
-                guide_11_b: '系統每 30 秒自動儲存草稿至會議資料夾（與逐字稿存放在同一位置），意外關閉後重新開啟可選擇還原上次的會議記錄。',
+                guide_11_b: '系統每 30 秒自動儲存逐字稿草稿至會議資料夾（與逐字稿存放在同一位置），意外關閉後重新開啟可選擇還原上次的逐字稿內容。',
                 guide_tip: '建議：正式會議前先做 1 次 30 秒測試錄音，確認麥克風、模型與匯出流程正常。',
                 contact_us: '聯絡我們',
                 storage_path_label: '目前存放位置：',
@@ -702,7 +702,7 @@
                 guide_10_h: 'Word Count Before Summary',
                 guide_10_b: 'Word count is shown before generating summary to help estimate processing time.',
                 guide_11_h: 'Auto-Save Draft',
-                guide_11_b: 'Draft is auto-saved every 30 seconds to the meeting folder (same location as the transcript file). If the app closes unexpectedly, you can restore the previous session on next launch.',
+                guide_11_b: 'Transcript draft is auto-saved every 30 seconds to the meeting folder (same location as the transcript file). If the app closes unexpectedly, you can restore the previous transcript on next launch.',
                 guide_tip: 'Tip: Before your first official meeting, run a 30-second test recording to confirm the microphone, model, and export flow are working.',
                 contact_us: 'Contact Us',
                 storage_path_label: 'Storage path:',
@@ -906,7 +906,6 @@
                 ts: Date.now(),
                 lines: transcriptRawLines.slice(),
                 timestamps: transcriptTimestamps.slice(),
-                summary: summaryCache.full || null,
                 meetingName: document.getElementById('meeting-name').value.trim(),
             });
         }
@@ -925,10 +924,6 @@
             transcriptLineNodes = [];
             transcriptDirtyIndices = new Set(transcriptRawLines.map((_, i) => i));
             renderTranscriptFromLines(true);
-            if (draft.summary) {
-                summaryCache.full = draft.summary;
-                showSummary('full', draft.summary);
-            }
             if (draft.meetingName) document.getElementById('meeting-name').value = draft.meetingName;
             isTranscriptReady = true;
             updateWordCount();
