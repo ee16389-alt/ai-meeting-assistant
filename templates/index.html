@@ -1543,13 +1543,13 @@
         }
 
         async function pauseRecording() {
-            if (audioContext && audioContext.state === 'running') {
-                await audioContext.suspend();
-            }
             isRecording = false;
             isPaused = true;
             recordingSessionReady = false;
             currentState = 'paused';
+            if (audioContext && audioContext.state === 'running') {
+                await audioContext.suspend();
+            }
             updateUI();
             socket.emit('pause_recording', {});
         }
@@ -1644,7 +1644,8 @@
                     audioContext.onstatechange = () => {
                         console.log('[Audio] AudioContext 狀態:', audioContext.state);
                         if (audioContext.state === 'interrupted' || audioContext.state === 'suspended') {
-                            if (isRecording) audioContext.resume().catch(() => null);
+                            // isPaused=true 時是使用者主動暫停，不自動 resume
+                            if (isRecording && !isPaused) audioContext.resume().catch(() => null);
                         }
                     };
                 }
