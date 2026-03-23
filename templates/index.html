@@ -316,7 +316,7 @@
                     <div class="flex items-center gap-2 flex-nowrap">
                         <button id="generate-summary-btn" onclick="requestSummary('full')" class="summary-tab flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200" data-mode="full" data-i18n="generate_summary">生成摘要</button>
                         <button onclick="regenerateSummary()" id="regenerate-btn" class="hidden flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
-                            <i data-lucide="refresh-cw" class="w-4 h-4 text-orange-500"></i> <span>重新生成</span>
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-orange-500"></i> <span data-i18n="regenerate">重新生成</span>
                         </button>
                         <button id="export-summary-btn" onclick="exportSummary('full')" class="hidden flex items-center gap-1.5 bg-white hover:bg-orange-50 text-slate-700 px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition-all border border-orange-200">
                             <i data-lucide="file-down" class="w-4 h-4 text-orange-500"></i> <span data-i18n="export_summary">匯出摘要</span>
@@ -635,6 +635,7 @@
                 summary_progress_chunk: '摘要生成中（{current}／{total} 段）...',
                 toast_summary_cancelled: '摘要已取消',
                 toast_summary_in_progress: '摘要生成中，請稍候完成後再點擊。',
+                regenerate: '重新生成',
             },
             en: {
                 app_title: 'AI Meeting Assistant',
@@ -674,7 +675,7 @@
                 summary_full: 'Full Summary',
                 generate_summary: 'Generate Summary',
                 summary_loading: 'Running local summary model for analysis...',
-                summary_loading_for: 'Generating: {title}',
+                summary_loading_for: 'Generating summary...',
                 export_transcript: 'Export Transcript',
                 export_summary: 'Export Summary',
                 export_full: 'Export Full Summary',
@@ -740,6 +741,7 @@
                 summary_progress_chunk: 'Generating summary ({current}/{total})...',
                 toast_summary_cancelled: 'Summary cancelled',
                 toast_summary_in_progress: 'Summary is being generated, please wait.',
+                regenerate: 'Regenerate',
             },
         };
 
