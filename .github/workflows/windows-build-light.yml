@@ -34,9 +34,11 @@ jobs:
           python -m pip install -r requirements_nollama.txt
           Remove-Item requirements_nollama.txt
           python -m pip install pyinstaller
-          # Build llama-cpp-python with AVX2 enabled for modern CPUs (12th Gen Intel+, Ryzen 3000+)
+          # Build llama-cpp-python with AVX2 only — explicitly disable AVX-512 to prevent
+          # STATUS_ILLEGAL_INSTRUCTION (WinError 0xc000001d) on Alder Lake E-cores (i7-1255U etc.)
+          # Both LLAMA_ and GGML_ prefixes are set for compatibility with llama.cpp <0.3 and >=0.3
           # --no-binary forces source build so CMAKE_ARGS are actually applied
-          $env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON"
+          $env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON -DLLAMA_AVX512=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON -DGGML_FMA=ON -DGGML_AVX512=OFF"
           python -m pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
 
       - name: Install NSIS
