@@ -800,7 +800,7 @@ def summarize_full(text: str):
     """全文摘要（streaming generator，逐 token yield）"""
     system_prompt = (
         "你是一位專業的繁體中文會議記錄員。"
-        "【語言規定】你的所有輸出必須且只能使用繁體中文，絕對禁止使用英文或任何其他語言。"
+        "【語言規定】請以繁體中文輸出；若逐字稿本身含有英文詞彙或專有名詞，可原文保留，但摘要主體必須使用繁體中文。"
         "必須用自己的語言重新整合與表達，絕對禁止逐句照抄逐字稿原文。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
         "請輸出 2-4 句話的精簡繁體中文摘要，整理主要脈絡、重點與結論。"
@@ -810,14 +810,14 @@ def summarize_full(text: str):
     if _is_info_insufficient(text):
         yield _insufficient_info_fallback(text, "full")
         return
-    yield from _call_model_stream(system_prompt, "請用繁體中文摘要以下逐字稿：\n" + text)
+    yield from _call_model_stream(system_prompt, "請以繁體中文摘要以下逐字稿（逐字稿中的英文詞彙可保留）：\n" + text)
 
 
 def summarize_key_points(text: str):
     """重點條列摘要（streaming generator，逐 token yield）"""
     system_prompt = (
         "你是一位專業的繁體中文會議記錄員。"
-        "【語言規定】你的所有輸出必須且只能使用繁體中文，絕對禁止使用英文或任何其他語言。"
+        "【語言規定】請以繁體中文輸出；若逐字稿本身含有英文詞彙或專有名詞，可原文保留，但摘要主體必須使用繁體中文。"
         "必須用自己的語言重新整合與表達，絕對禁止逐句照抄逐字稿原文。"
         "只能根據逐字稿內容，不可補充或推測未提及的資訊。"
         "以條列式呈現，每個重點用「•」開頭，根據內容多寡自行決定數量，不強制固定點數，最多不超過 100 點。"
@@ -828,13 +828,13 @@ def summarize_key_points(text: str):
     if _is_info_insufficient(text):
         yield _insufficient_info_fallback(text, "key_points")
         return
-    yield from _call_model_stream(system_prompt, "請用繁體中文條列以下逐字稿的重點：\n" + text)
+    yield from _call_model_stream(system_prompt, "請以繁體中文條列以下逐字稿的重點（逐字稿中的英文詞彙可保留）：\n" + text)
 
 
 def summarize_all_in_one(text: str) -> dict:
     """一次性產出全文摘要與重點條列，節省推論時間。"""
     system_prompt = (
-        "你是一位專業的繁體中文會議記錄員。【語言規定】你的所有輸出必須且只能使用繁體中文，絕對禁止使用英文或任何其他語言。\n"
+        "你是一位專業的繁體中文會議記錄員。【語言規定】請以繁體中文輸出；若逐字稿本身含有英文詞彙或專有名詞，可原文保留，但摘要主體必須使用繁體中文。\n"
         "請針對提供的逐字稿，一次性提供以下兩個部分的內容：\n"
         "1. 【全文摘要】：用 2-4 句話精簡整理主要脈絡與結論。\n"
         "2. 【重點條列】：列出 3-5 個核心重點，以「•」開頭。\n"
