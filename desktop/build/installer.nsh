@@ -2,7 +2,7 @@
 
 !macro customUnInstall
   StrCpy $0 "$APPDATA\AI Meeting Assistant\models"
-  ${If} ${FileExists} "$0\*.*"
+  ${If} ${FileExists} "$0\*"
     MessageBox MB_YESNO|MB_ICONQUESTION "是否同時刪除已下載的 AI 模型？$\n$\n保留模型可在重新安裝時跳過下載（約 2 GB）。" IDYES delete_models IDNO keep_models
     delete_models:
       RMDir /r "$0"
