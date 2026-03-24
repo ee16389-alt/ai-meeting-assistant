@@ -541,12 +541,9 @@ def handle_open_storage_folder(data=None):
 def handle_export(data):
     meeting_name = data.get("meeting_name", "").strip()
     transcript_override = data.get("transcript_override", "").strip()
-    summary_overrides = {
-        "full": data.get("summary_full", "").strip(),
-    }
     if not meeting_name:
         meeting_name = time.strftime("meeting_%Y%m%d_%H%M%S")
-    socketio.start_background_task(_export_meeting, meeting_name, transcript_override, summary_overrides)
+    socketio.start_background_task(_export_meeting, meeting_name, transcript_override)
 
 
 
@@ -818,14 +815,7 @@ def _generate_summary_inner(mode: str, full_text: str, sid: str):
 
 
 def _export_meeting(meeting_name: str, transcript_override: str = "", summary_overrides: dict = None):
-    """背景匯出逐字稿（有摘要時一併匯出）"""
-    if transcript_override:
-        full_text = transcript_override
-    else:
-        full_text = "\n".join(
-            line["text"] for line in transcript_lines
-        )
-
+    """背景匯出逐字稿（僅儲存 transcript.txt）"""
     # 組合逐字稿內容
     transcript_lines_out = []
     transcript_lines_out.append(f"會議名稱: {meeting_name}")
@@ -845,29 +835,6 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
 
     transcript_content = "\n".join(transcript_lines_out)
 
-    # 判斷是否有摘要：有則各模式分別寫入獨立檔案，無則只匯出逐字稿
-    cached = summary_overrides or {}
-    summary_full = cached.get("full", "").strip()
-
-    def _build_summary_file(title: str, content: str) -> str:
-        lines = [
-            f"會議名稱: {meeting_name}",
-            f"匯出時間: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-            "=" * 50,
-            "",
-            title,
-            content,
-        ]
-        return "\n".join(lines)
-
-    summary_files: list[tuple[str, str]] = []  # (path, content)
-    if summary_full:
-        summary_files.append((
-            os.path.join(_meeting_output_dir(meeting_name), "summary_full.txt"),
-            _build_summary_file("【全文摘要】", summary_full),
-        ))
-
-    # 寫入檔案（目標資料夾不存在時自動建立）
     export_dir = _meeting_output_dir(meeting_name)
     transcript_path = os.path.join(export_dir, "transcript.txt")
 
@@ -875,9 +842,6 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
         os.makedirs(export_dir, exist_ok=True)
         with open(transcript_path, "w", encoding="utf-8") as f:
             f.write(transcript_content)
-        for path, content in summary_files:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(content)
     except PermissionError:
         socketio.emit("export_error", {"message": f"匯出失敗：權限不足，無法寫入至 {export_dir}"})
         return
@@ -893,12 +857,7 @@ def _export_meeting(meeting_name: str, transcript_override: str = "", summary_ov
         socketio.emit("export_error", {"message": f"匯出失敗：{e}"})
         return
 
-    saved_files = [{"filename": f"{meeting_name}_transcript.txt", "saved_path": transcript_path}]
-    for path, _ in summary_files:
-        filename = os.path.basename(path)
-        saved_files.append({"filename": f"{meeting_name}_{filename}", "saved_path": path})
-
-    socketio.emit("export_ready", {"files": saved_files})
+    socketio.emit("export_ready", {"files": [{"filename": f"{meeting_name}_transcript.txt", "saved_path": transcript_path}]})
 
 
 def _export_summary(meeting_name: str, mode: str, transcript_override: str = "", summary_overrides: dict = None):

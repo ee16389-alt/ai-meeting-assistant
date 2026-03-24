@@ -633,6 +633,7 @@
                 summary_finalizing: '最終整合中...',
                 summary_generating: '摘要生成中...',
                 summary_progress_chunk: '摘要生成中（{current}／{total} 段）...',
+                toast_exporting: '匯出中...',
                 toast_summary_cancelled: '摘要已取消',
                 toast_summary_in_progress: '摘要生成中，請稍候完成後再點擊。',
                 regenerate: '重新生成',
@@ -739,6 +740,7 @@
                 summary_finalizing: 'Finalizing...',
                 summary_generating: 'Generating summary...',
                 summary_progress_chunk: 'Generating summary ({current}/{total})...',
+                toast_exporting: 'Exporting...',
                 toast_summary_cancelled: 'Summary cancelled',
                 toast_summary_in_progress: 'Summary is being generated, please wait.',
                 regenerate: 'Regenerate',
@@ -2321,20 +2323,12 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 _pendingStartAfterExport = false;
                 return;
             }
-            const hasSummary = !!summaryCache.full;
-            if (!hasSummary) {
-                showToast('將只匯出逐字稿，如需摘要請先點擊摘要按鈕');
-            } else {
-                showToast('匯出中...');
-            }
-            console.log('[Export] 開始匯出，hasSummary:', hasSummary, 'meeting:', meetingName);
-            // 傳送已快取的摘要內容；無摘要時傳空字串，後端只寫逐字稿
-            // 各模式分別傳送，後端依內容決定寫入哪些檔案
+            showToast(t('toast_exporting'));
+            console.log('[Export] 開始匯出逐字稿，meeting:', meetingName);
             clearDraft();
             socket.emit('export_meeting', {
                 meeting_name: meetingName,
                 transcript_override: transcriptText,
-                summary_full: summaryCache.full || '',
             });
         }
 
