@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -443,6 +443,7 @@ async function createWindow() {
   }
 
   // 主視窗（先顯示載入畫面）
+  Menu.setApplicationMenu(null);
   const mainWin = new BrowserWindow({
     width: 1280, height: 800,
     backgroundColor: "#fff8f3",
