@@ -284,6 +284,7 @@ function waitForServer() {
   // 無 timeout 限制，持續等到後端就緒或進程結束
   return new Promise((resolve, reject) => {
     const tryOnce = () => {
+      if (isQuitting) { reject(new Error("quitting")); return; }
       if (backendProcess && backendProcess.exitCode !== null) {
         let msg = `後端程式已意外終止 (代碼: ${backendProcess.exitCode})。`;
         if (backendRecentLogs.length) {
@@ -471,6 +472,7 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
     await waitForServer();
     await mainWin.loadURL(BACKEND_URL);
   } catch (e) {
+    if (isQuitting) { app.exit(0); return; }
     let msg = `後端服務無法就緒。\n\n${e.message}`;
     if (backendRecentLogs.length) msg += `\n\n最近日誌：\n${backendRecentLogs.slice(-6).join("\n")}`;
     dialog.showErrorBox("啟動失敗", msg);
@@ -488,7 +490,10 @@ app.whenReady().then(() => {
 });
 
 // 強制終止後端子程序（不等待 LLM 推理完成）
+let isQuitting = false;
+
 function killBackend() {
+  isQuitting = true;
   if (!backendProcess) return;
   const proc = backendProcess;
   backendProcess = null;
@@ -594,5 +599,6 @@ app.on("before-quit", killBackend);
 
 app.on("window-all-closed", () => {
   killBackend();
-  app.quit();
+  // app.exit(0) 強制終止，不等待 pending timers（如 waitForServer 輪詢）
+  setTimeout(() => app.exit(0), 600);
 });
