@@ -478,7 +478,14 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
   }
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  // 拒絕定位權限請求，避免 Chromium 彈出定位詢問視窗
+  const { session } = require("electron");
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(permission !== "geolocation");
+  });
+  createWindow();
+});
 
 // 強制終止後端子程序（不等待 LLM 推理完成）
 function killBackend() {
