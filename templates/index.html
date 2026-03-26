@@ -1746,6 +1746,8 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         window.addEventListener('beforeunload', (e) => {
             cleanupRecordingGraph({ releaseStream: true });
+            // 摘要生成中不攔截關閉（讓使用者可以強制退出卡住的摘要）
+            if (summaryRequestInFlight > 0) return;
             const hasPrevTranscript = transcriptRawLines.length > 0;
             const hasPrevSummary = !!summaryCache.full;
             if (!hasExportedCurrentSession && (hasPrevTranscript || hasPrevSummary)) {

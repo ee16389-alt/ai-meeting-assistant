@@ -668,6 +668,8 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
         def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done):
             try:
                 for tok in _call_model_stream(sys_p, user_p, max_tokens=64):
+                    if _is_summary_cancelled():
+                        break
                     result[0] += tok
             except Exception as e:
                 print(f"[Summary] map-reduce 第 {idx}/{total} 段例外: {e}", flush=True)
@@ -763,6 +765,8 @@ def _generate_summary_inner(mode: str, full_text: str, sid: str):
     def _do_final():
         try:
             for chunk in _call_model_stream(system_prompt, grounded_prompt, max_tokens=final_max_tokens):
+                if _is_summary_cancelled():
+                    break
                 final_result["tokens"].append(chunk)
         except Exception as e:
             final_result["error"] = str(e)
