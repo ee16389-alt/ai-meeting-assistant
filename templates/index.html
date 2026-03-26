@@ -1273,6 +1273,8 @@
             endSummaryRequest();
             setTranscriptOpsLocked(false);
             showToast(msg);
+            const streamDiv = document.getElementById(`summary-stream-${data && data.mode}`);
+            if (streamDiv) streamDiv.remove();
         });
 
         socket.on('export_ready', (data) => {
