@@ -632,7 +632,7 @@
                 cancel: '取消',
                 summary_finalizing: '最終整合中...',
                 summary_generating: '摘要生成中...',
-                summary_progress_chunk: '摘要生成中（{current}／{total} 段）...',
+                summary_progress_chunk: '摘要生成中（{current}／{total} 段）{eta}',
                 toast_exporting: '匯出中...',
                 toast_summary_cancelled: '摘要已取消',
                 toast_summary_in_progress: '摘要生成中，請稍候完成後再點擊。',
@@ -739,7 +739,7 @@
                 cancel: 'Cancel',
                 summary_finalizing: 'Finalizing...',
                 summary_generating: 'Generating summary...',
-                summary_progress_chunk: 'Generating summary ({current}/{total})...',
+                summary_progress_chunk: 'Generating summary ({current}/{total}){eta}',
                 toast_exporting: 'Exporting...',
                 toast_summary_cancelled: 'Summary cancelled',
                 toast_summary_in_progress: 'Summary is being generated, please wait.',
@@ -1109,7 +1109,23 @@
                 label.textContent = t('summary_finalizing');
                 bar.style.width = '100%';
             } else {
-                label.textContent = tFormat('summary_progress_chunk', { current: data.current, total: data.total });
+                // 預估剩餘時間：根據後端回傳的 elapsed_sec 計算每段平均耗時
+                let eta = '';
+                if (data.elapsed_sec > 0 && data.current >= 1 && data.total > data.current) {
+                    const avgSec = data.elapsed_sec / data.current;
+                    const remainSec = Math.round(avgSec * (data.total - data.current));
+                    if (remainSec >= 60) {
+                        const m = Math.floor(remainSec / 60), s = remainSec % 60;
+                        eta = currentLang === 'zh'
+                            ? `，約剩 ${m} 分 ${s} 秒`
+                            : `，~${m}m ${s}s left`;
+                    } else if (remainSec >= 5) {
+                        eta = currentLang === 'zh'
+                            ? `，約剩 ${remainSec} 秒`
+                            : `，~${remainSec}s left`;
+                    }
+                }
+                label.textContent = tFormat('summary_progress_chunk', { current: data.current, total: data.total, eta });
                 bar.style.width = `${Math.round(data.current / data.total * 100)}%`;
             }
         });

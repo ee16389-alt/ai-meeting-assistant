@@ -644,8 +644,9 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
     chunk_size = 2000
     chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
     total = len(chunks)
-    _CHUNK_TIMEOUT = 60.0
+    _CHUNK_TIMEOUT = 120.0
     mini_parts = []
+    _map_reduce_start = time.time()
     for idx, chunk in enumerate(chunks, 1):
         if _is_summary_cancelled():
             print(f"[Summary] map-reduce 已取消（第 {idx}/{total} 段前）", flush=True)
@@ -655,6 +656,7 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
                 "current": idx,
                 "total": total,
                 "stage": "compress",
+                "elapsed_sec": round(time.time() - _map_reduce_start, 1),
             }, room=sid)
         t_chunk = time.time()
         print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
