@@ -677,7 +677,26 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
                 done.set()
 
         threading.Thread(target=_do_chunk, daemon=True).start()
-        completed = chunk_done.wait(timeout=_CHUNK_TIMEOUT)
+        # 輪詢等待：每 5 秒發一次 keep_alive + summary_progress，防止前端誤判逾時
+        _CHUNK_POLL = 5.0
+        deadline = time.time() + _CHUNK_TIMEOUT
+        completed = False
+        while True:
+            if chunk_done.wait(timeout=_CHUNK_POLL):
+                completed = True
+                break
+            if _is_summary_cancelled():
+                break
+            if time.time() >= deadline:
+                break
+            if sid:
+                socketio.emit("keep_alive", {}, room=sid)
+                socketio.emit("summary_progress", {
+                    "current": idx,
+                    "total": total,
+                    "stage": "compress",
+                    "elapsed_sec": int(time.time() - _map_reduce_start),
+                }, room=sid)
         if not completed:
             print(f"[Summary] 第 {idx}/{total} 段壓縮超時（>{_CHUNK_TIMEOUT}s），已跳過", flush=True)
             mini_parts.append(f"第{idx}段重點：（超時略過）")
