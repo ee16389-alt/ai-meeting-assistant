@@ -198,6 +198,13 @@
 </head>
 <body class="grid-glow font-sans text-slate-900 p-4 md:p-8">
     <div id="toast" class="toast"></div>
+    <div id="mic-banner" class="hidden max-w-7xl mx-auto mb-4 flex items-center justify-between gap-3 px-4 py-3 rounded-xl border border-yellow-300 bg-yellow-50 text-yellow-800 text-sm font-medium">
+        <div class="flex items-center gap-2">
+            <i data-lucide="triangle-alert" class="w-4 h-4 flex-shrink-0"></i>
+            <span id="mic-banner-text"></span>
+        </div>
+        <button onclick="document.getElementById('mic-banner').classList.add('hidden')" class="text-yellow-600 hover:text-yellow-800 flex-shrink-0">✕</button>
+    </div>
     <div class="max-w-7xl mx-auto">
 
         <!-- HEADER -->
@@ -219,6 +226,10 @@
                             <i data-lucide="square" class="w-5 h-5"></i> <span data-i18n="stop">停止</span>
                         </button>
                         <span id="recording-timer" class="hidden font-mono text-red-500 font-semibold text-sm tabular-nums bg-red-50 border border-red-200 px-2.5 py-1.5 rounded-lg">00:00</span>
+                        <span id="audio-quality-indicator" class="hidden items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border">
+                            <span id="audio-quality-dot" class="text-sm leading-none">●</span>
+                            <span id="audio-quality-label"></span>
+                        </span>
                     </div>
                 </div>
 
@@ -499,6 +510,10 @@
         let isCountdown = false;
         let countdownTimer = null;
         let isRecording = false;
+        let _silenceStart = null;
+        let _silenceWarningShown = false;
+        let _recordingStartedAt = null;
+        let _lastAudioQuality = null;
         let isPaused = false; // 使用者主動暫停時為 true，區分重連競態與正常暫停
         let sttModelKey = null;
         let currentLang = 'zh';
@@ -637,6 +652,13 @@
                 toast_summary_cancelled: '摘要已取消',
                 toast_summary_in_progress: '摘要生成中，請稍候完成後再點擊。',
                 regenerate: '重新生成',
+                mic_permission_denied: '麥克風存取被拒絕，請至 Windows 設定 → 隱私權 → 麥克風 允許存取',
+                mic_not_found: '未偵測到麥克風，請確認麥克風已連接',
+                mic_not_readable: '麥克風無法使用，可能被其他程式占用',
+                audio_quality_good: '收音良好',
+                audio_quality_low: '音量偏小',
+                audio_quality_silent: '幾乎無聲',
+                mic_silent_warning: '已超過 30 秒未收到聲音，請確認麥克風是否正常',
             },
             en: {
                 app_title: 'AI Meeting Assistant',
@@ -744,6 +766,13 @@
                 toast_summary_cancelled: 'Summary cancelled',
                 toast_summary_in_progress: 'Summary is being generated, please wait.',
                 regenerate: 'Regenerate',
+                mic_permission_denied: 'Microphone access denied. Go to Windows Settings → Privacy → Microphone to allow access.',
+                mic_not_found: 'No microphone detected. Please check your microphone connection.',
+                mic_not_readable: 'Microphone unavailable. It may be in use by another application.',
+                audio_quality_good: 'Audio OK',
+                audio_quality_low: 'Low volume',
+                audio_quality_silent: 'No audio',
+                mic_silent_warning: 'No audio detected for 30 seconds. Please check your microphone.',
             },
         };
 
@@ -759,6 +788,77 @@
                 });
             }
             return text;
+        }
+
+        function showMicBanner(msgKey) {
+            const banner = document.getElementById('mic-banner');
+            const text = document.getElementById('mic-banner-text');
+            if (!banner || !text) return;
+            text.textContent = t(msgKey);
+            banner.classList.remove('hidden');
+        }
+
+        async function checkMicOnStartup() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                stream.getTracks().forEach(track => track.stop());
+            } catch (err) {
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    showMicBanner('mic_permission_denied');
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    showMicBanner('mic_not_found');
+                } else {
+                    showMicBanner('mic_not_readable');
+                }
+            }
+        }
+
+        function updateAudioQualityIndicator(quality) {
+            const indicator = document.getElementById('audio-quality-indicator');
+            const dot = document.getElementById('audio-quality-dot');
+            const label = document.getElementById('audio-quality-label');
+            if (!indicator || !dot || !label) return;
+            const configs = {
+                good:   { cls: 'text-green-700 bg-green-50 border-green-300',  label: t('audio_quality_good') },
+                low:    { cls: 'text-yellow-700 bg-yellow-50 border-yellow-300', label: t('audio_quality_low') },
+                silent: { cls: 'text-red-600 bg-red-50 border-red-300',        label: t('audio_quality_silent') },
+            };
+            const cfg = configs[quality] || configs.silent;
+            indicator.className = `flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border ${cfg.cls}`;
+            label.textContent = cfg.label;
+        }
+
+        function trackSilence(quality) {
+            if (!isRecording) return;
+            const now = Date.now();
+            if (_recordingStartedAt && (now - _recordingStartedAt) < 15000) return; // 15s grace
+            if (quality === 'silent') {
+                if (_silenceStart === null) _silenceStart = now;
+                if (!_silenceWarningShown && (now - _silenceStart) >= 30000) {
+                    _silenceWarningShown = true;
+                    showToast(t('mic_silent_warning'));
+                }
+            } else {
+                _silenceStart = null;
+                _silenceWarningShown = false;
+            }
+        }
+
+        function showAudioQualityIndicator() {
+            const el = document.getElementById('audio-quality-indicator');
+            if (el) el.classList.remove('hidden');
+            _silenceStart = null;
+            _silenceWarningShown = false;
+            _recordingStartedAt = Date.now();
+        }
+
+        function hideAudioQualityIndicator() {
+            const el = document.getElementById('audio-quality-indicator');
+            if (el) el.classList.add('hidden');
+            _silenceStart = null;
+            _silenceWarningShown = false;
+            _recordingStartedAt = null;
         }
 
         // ── 錄音計時器 ──────────────────────────────────
@@ -1176,6 +1276,13 @@
             console.log('[Summary] keep_alive received, timeout reset');
         });
 
+        socket.on('audio_level', (data) => {
+            if (!isRecording) return;
+            _lastAudioQuality = data.quality;
+            updateAudioQualityIndicator(data.quality);
+            trackSilence(data.quality);
+        });
+
         // 摘要中途錯誤：顯示提示並立即解鎖（後端修復後不再送 summary_done）
         socket.on('summary_error', (data) => {
             const msg = (data && data.message) || '摘要產生中斷，請重試';
@@ -1549,6 +1656,7 @@
                 hasExportedCurrentSession = false;
                 isRecording = true;
                 startRecordingTimer();
+                showAudioQualityIndicator();
                 meetingInput.disabled = true;
                 document.getElementById('save-audio').disabled = true;
             } catch (err) {
@@ -1597,6 +1705,7 @@
                 recordingSessionReady = false;
                 currentState = 'stopped';
                 stopRecordingTimer();
+                hideAudioQualityIndicator();
                 updateUI();
                 if (mediaRecorder) {
                     mediaRecorder.stop();
@@ -2483,6 +2592,7 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             // 草稿：啟動時檢查，每 30 秒自動存一次
             checkAndRestoreDraft();
             _autosaveInterval = setInterval(saveDraft, 30000);
+            checkMicOnStartup();
         });
 
         applyI18n();

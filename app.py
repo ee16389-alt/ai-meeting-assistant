@@ -228,6 +228,7 @@ threading.Thread(target=_warmup_llm, daemon=True).start()
 transcript_lines: list[dict] = []
 _transcript_lock = threading.Lock()
 audio_chunk_count = 0
+_last_audio_level_emit: float = 0.0
 _active_sid: str = ""  # 目前錄音的 client session id
 _recording_token: str = ""  # 每次錄音生成的唯一 token，前端用來過濾舊事件
 _recording_start_time: float = 0.0  # 本場錄音開始的 time.time()，用於計算經過時間戳記
@@ -383,7 +384,7 @@ def handle_start(data=None):
 @socketio.on("audio_chunk")
 def handle_audio_chunk(data):
     """接收二進位音頻 chunk"""
-    global audio_chunk_count
+    global audio_chunk_count, _last_audio_level_emit
     if stt.state == "error":
         return {"ok": False, "reason": "stt_unavailable", "error": _stt_init_error}
     if isinstance(data, dict):
@@ -408,6 +409,22 @@ def handle_audio_chunk(data):
     print(f"[STT] 收到音訊 chunk: {size} bytes (count={audio_chunk_count})", flush=True)
 
     stt.feed_audio(chunk)  # 非阻塞，結果由背景 worker 透過 callback 推送
+    # 每秒發一次音量品質事件給前端
+    now = time.time()
+    if now - _last_audio_level_emit >= 1.0:
+        _last_audio_level_emit = now
+        try:
+            samples = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            rms = float(np.sqrt(np.mean(samples ** 2)))
+            if rms >= 0.01:
+                quality = "good"
+            elif rms >= 0.003:
+                quality = "low"
+            else:
+                quality = "silent"
+            socketio.emit("audio_level", {"rms": round(rms, 5), "quality": quality}, room=request.sid)
+        except Exception:
+            pass
     return {"ok": True, "size": size, "count": audio_chunk_count}
 
 
