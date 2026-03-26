@@ -636,12 +636,15 @@ def _finish_transcription(sid: str, token: str):
 _MAX_CHARS_SINGLE_PASS = 3000
 
 
+_MAX_CHUNKS = 8  # 分段上限，避免超長逐字稿推理時間過長
+
+
 def _compress_long_transcript(full_text: str, sid: str = "") -> str:
     """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。
-    chunk_size 設為 2000 字，對應 n_ctx=4096 的 80% 以內（含 system prompt 開銷後仍安全）。
+    chunk_size 動態計算：最少 2000 字，但總段數不超過 _MAX_CHUNKS（預設 8 段）。
     """
     from cognition import _call_model_stream
-    chunk_size = 2000
+    chunk_size = max(2000, -(-len(full_text) // _MAX_CHUNKS))  # ceiling division
     chunks = [full_text[i:i + chunk_size] for i in range(0, len(full_text), chunk_size)]
     total = len(chunks)
     _CHUNK_TIMEOUT = 120.0
@@ -726,7 +729,7 @@ def _generate_summary_inner(mode: str, full_text: str, sid: str):
     # ── 診斷 log ──────────────────────────────────────────
     char_count = len(full_text)
     use_map_reduce = char_count > _MAX_CHARS_SINGLE_PASS
-    chunk_size = 2000
+    chunk_size = max(2000, -(-char_count // _MAX_CHUNKS))
     chunk_count = (char_count + chunk_size - 1) // chunk_size if use_map_reduce else 1
     print(
         f"[Summary] mode={mode} | 逐字稿={char_count} 字 | "
