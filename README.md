@@ -125,7 +125,7 @@ Frontend transcript panel (real-time display)
 | `transcription_ready` | — | Flush complete, all lines delivered |
 | `summary_start` | `{mode}` | Summary generation started |
 | `summary_token` | `{mode, token}` | Streaming summary token |
-| `summary_progress` | `{current, total, stage}` | Map-reduce chunk progress |
+| `summary_progress` | `{current, total, stage, elapsed_sec}` | Map-reduce chunk progress |
 | `summary_done` | `{mode, content}` | Summary complete |
 | `summary_error` | `{mode, message}` | Summary failed or cancelled |
 | `keep_alive` | `{mode}` | Heartbeat during long inference |
@@ -194,9 +194,11 @@ pip install flask flask-socketio sherpa-onnx requests numpy opencc-python-reimpl
 Always build from source with AVX2 enabled and AVX-512 disabled:
 
 ```powershell
-$env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON -DLLAMA_AVX512=OFF"
+$env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON -DLLAMA_AVX512=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON -DGGML_FMA=ON -DGGML_AVX512=OFF"
 pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
 ```
+
+Both `LLAMA_` and `GGML_` prefixes are required for compatibility with llama.cpp versions before and after 0.3.0.
 
 This requires CMake and a C++ build toolchain (Visual Studio Build Tools or MSVC). The GitHub Actions workflow handles this automatically.
 
@@ -424,7 +426,7 @@ The current pipeline does not perform speaker diarization. All transcript lines 
 This means `llama-cpp-python` was compiled with AVX-512 instructions that your CPU does not support. Reinstall from source:
 
 ```powershell
-$env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON -DLLAMA_AVX512=OFF"
+$env:CMAKE_ARGS = "-DLLAMA_AVX=ON -DLLAMA_AVX2=ON -DLLAMA_F16C=ON -DLLAMA_FMA=ON -DLLAMA_AVX512=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_F16C=ON -DGGML_FMA=ON -DGGML_AVX512=OFF"
 pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-cpp-python
 ```
 
@@ -433,7 +435,7 @@ pip install llama-cpp-python --force-reinstall --no-cache-dir --no-binary llama-
 The LLM is processing on CPU — this is expected. Check:
 
 1. The `keep_alive` heartbeat should fire every ~5 seconds in the browser console
-2. If the progress bar is on a specific chunk number and does not advance after 60 seconds, the map-reduce chunk has timed out — the app will skip it and continue
+2. If the progress bar is on a specific chunk number and does not advance after 120 seconds, the map-reduce chunk has timed out — the app will skip it and continue
 3. If the spinner has been running for more than 5 minutes, click **Cancel**, then try again with a shorter transcript or use **Edit Full Text** to trim it
 
 ### Q: STT accuracy is poor — many missed or wrong words
