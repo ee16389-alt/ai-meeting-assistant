@@ -1180,10 +1180,10 @@
                 bar.style.width = '100%';
             } else {
                 let eta = '';
-                if (!data.heartbeat && data.elapsed_sec > 0 && data.current >= 2 && data.total > data.current) {
-                    const completedChunks = data.current - 1;
-                    const avgSec = data.elapsed_sec / completedChunks;
-                    const remainSec = Math.round(avgSec * (data.total - data.current + 1));
+                if (!data.heartbeat && data.elapsed_sec > 0 && data.current >= 1 && data.total > data.current) {
+                    // 段完成後才重算：data.current = 已完成段數，remaining = 剩餘段數
+                    const avgSec = data.elapsed_sec / data.current;
+                    const remainSec = Math.round(avgSec * (data.total - data.current));
                     if (remainSec >= 60) {
                         const m = Math.floor(remainSec / 60), s = remainSec % 60;
                         eta = currentLang === 'zh'
@@ -1195,7 +1195,7 @@
                             : `，~${remainSec}s left`;
                     }
                 } else if (data.heartbeat) {
-                    // heartbeat 輪詢事件：保留目前顯示的 ETA 不重算，只更新 label 中的 {eta} 部分
+                    // heartbeat：保留上次 ETA 文字，不重算
                     const existingLabel = document.getElementById('summary-progress-label');
                     const existingText = existingLabel ? existingLabel.textContent : '';
                     const etaMatch = existingText.match(/，約剩.*|，~.*/);
@@ -1221,6 +1221,13 @@
                 const container = document.getElementById('summary-container');
                 container.scrollTop = container.scrollHeight;
             }
+        });
+
+        socket.on('summary_clear', (data) => {
+            // 分段壓縮完畢，清除中間串流內容，等候最終整合摘要
+            if (summaryRequestInFlight <= 0) return;
+            const target = document.getElementById(`summary-stream-${data.mode}`);
+            if (target) target.textContent = '';
         });
 
         socket.on('summary_done', (data) => {

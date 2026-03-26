@@ -656,7 +656,7 @@ _MAX_CHARS_SINGLE_PASS = 3000
 _MAX_CHUNKS = 8  # 分段上限，避免超長逐字稿推理時間過長
 
 
-def _compress_long_transcript(full_text: str, sid: str = "") -> str:
+def _compress_long_transcript(full_text: str, sid: str = "", mode: str = "full") -> str:
     """超長逐字稿：分段送 LLM 各自摘要，再把所有段落小摘要合併，作為最終摘要的輸入。
     chunk_size 動態計算：最少 2000 字，但總段數不超過 _MAX_CHUNKS（預設 8 段）。
     """
@@ -671,13 +671,18 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
         if _is_summary_cancelled():
             print(f"[Summary] map-reduce 已取消（第 {idx}/{total} 段前）", flush=True)
             return "\n\n".join(mini_parts) or full_text
+        # 段開始：只更新進度列位置，不重算 ETA（heartbeat=True）
         if sid:
             socketio.emit("summary_progress", {
                 "current": idx,
                 "total": total,
                 "stage": "compress",
                 "elapsed_sec": round(time.time() - _map_reduce_start, 1),
+                "heartbeat": True,
             }, room=sid)
+            # 即時顯示每段前綴到摘要面板
+            prefix = f"第{idx}段重點：" if idx == 1 else f"\n\n第{idx}段重點："
+            socketio.emit("summary_token", {"mode": mode, "token": prefix}, room=sid)
         t_chunk = time.time()
         print(f"[Summary] map-reduce 第 {idx}/{total} 段開始，chunk 字數={len(chunk)}", flush=True)
         sys_p = "用繁體中文摘要以下內容成 1 句重點"
@@ -685,14 +690,20 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
         mini_result = [""]
         chunk_done = threading.Event()
 
-        def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done):
+        def _do_chunk(sys_p=sys_p, user_p=user_p, result=mini_result, done=chunk_done,
+                      _sid=sid, _mode=mode, _idx=idx, _total=total):
             try:
                 for tok in _call_model_stream(sys_p, user_p, max_tokens=64):
                     if _is_summary_cancelled():
                         break
                     result[0] += tok
+                    if _sid:
+                        socketio.emit("summary_token", {
+                            "mode": _mode,
+                            "token": _to_traditional(tok),
+                        }, room=_sid)
             except Exception as e:
-                print(f"[Summary] map-reduce 第 {idx}/{total} 段例外: {e}", flush=True)
+                print(f"[Summary] map-reduce 第 {_idx}/{_total} 段例外: {e}", flush=True)
             finally:
                 done.set()
 
@@ -725,6 +736,15 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
         mini = mini_result[0]
         print(f"[Summary] map-reduce 第 {idx}/{total} 段完成，耗時 {time.time()-t_chunk:.1f}s，輸出 {len(mini)} 字", flush=True)
         mini_parts.append(f"第{idx}段重點：{mini.strip()}")
+        # 段完成後：非 heartbeat emit，觸發前端重算 ETA
+        if sid:
+            socketio.emit("summary_progress", {
+                "current": idx,
+                "total": total,
+                "stage": "compress",
+                "elapsed_sec": round(time.time() - _map_reduce_start, 1),
+                "heartbeat": False,
+            }, room=sid)
     return "\n\n".join(mini_parts)
 
 
@@ -769,10 +789,12 @@ def _generate_summary_inner(mode: str, full_text: str, sid: str):
             "mode": mode,
             "token": f"逐字稿共約 {char_count} 字，將分段處理後再彙整摘要...\n\n"
         }, room=sid)
-        full_text = _compress_long_transcript(full_text, sid=sid)
+        full_text = _compress_long_transcript(full_text, sid=sid, mode=mode)
         if _is_summary_cancelled():
             socketio.emit("summary_error", {"mode": mode, "message": "摘要已取消"}, room=sid)
             return
+        # 清除前端分段串流內容，準備顯示最終整合摘要
+        socketio.emit("summary_clear", {"mode": mode}, room=sid)
         source_label = "以下是各段逐字稿的重點摘要，請根據這些重點產出最終摘要"
     else:
         source_label = "以下是本次會議的完整逐字稿，這是你唯一可以使用的資料來源"
