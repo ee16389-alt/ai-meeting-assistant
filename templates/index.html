@@ -1118,6 +1118,12 @@
                 _pendingStartAfterExport = false;
                 showToast('連線中斷，請重新手動匯出後再開始新會議');
             }
+            if (summaryRequestInFlight > 0) {
+                const label = document.getElementById('summary-progress-label');
+                if (label) label.textContent = currentLang === 'zh'
+                    ? '連線中斷，摘要仍在後台執行中...'
+                    : 'Connection lost. Summary is still running in background...';
+            }
         });
 
         socket.on('connect_error', () => {
@@ -1209,11 +1215,11 @@
                 label.textContent = t('summary_finalizing');
                 bar.style.width = '100%';
             } else {
-                // 預估剩餘時間：根據後端回傳的 elapsed_sec 計算每段平均耗時
                 let eta = '';
-                if (data.elapsed_sec > 0 && data.current >= 1 && data.total > data.current) {
-                    const avgSec = data.elapsed_sec / data.current;
-                    const remainSec = Math.round(avgSec * (data.total - data.current));
+                if (!data.heartbeat && data.elapsed_sec > 0 && data.current >= 2 && data.total > data.current) {
+                    const completedChunks = data.current - 1;
+                    const avgSec = data.elapsed_sec / completedChunks;
+                    const remainSec = Math.round(avgSec * (data.total - data.current + 1));
                     if (remainSec >= 60) {
                         const m = Math.floor(remainSec / 60), s = remainSec % 60;
                         eta = currentLang === 'zh'
@@ -1224,6 +1230,12 @@
                             ? `，約剩 ${remainSec} 秒`
                             : `，~${remainSec}s left`;
                     }
+                } else if (data.heartbeat) {
+                    // heartbeat 輪詢事件：保留目前顯示的 ETA 不重算，只更新 label 中的 {eta} 部分
+                    const existingLabel = document.getElementById('summary-progress-label');
+                    const existingText = existingLabel ? existingLabel.textContent : '';
+                    const etaMatch = existingText.match(/，約剩.*|，~.*/);
+                    eta = etaMatch ? etaMatch[0] : '';
                 }
                 label.textContent = tFormat('summary_progress_chunk', { current: data.current, total: data.total, eta });
                 bar.style.width = `${Math.round(data.current / data.total * 100)}%`;
@@ -2592,7 +2604,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             // 草稿：啟動時檢查，每 30 秒自動存一次
             checkAndRestoreDraft();
             _autosaveInterval = setInterval(saveDraft, 30000);
-            checkMicOnStartup();
         });
 
         applyI18n();

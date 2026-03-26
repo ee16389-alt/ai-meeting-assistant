@@ -466,6 +466,19 @@ body{background:linear-gradient(135deg,#fff8f3,#f8fafc,#f3f7f2);display:flex;fle
 
   mainWin.once("ready-to-show", () => mainWin.show());
 
+  // 若 renderer 凍結導致 beforeunload 無回應，5 秒後強制關閉
+  let _closeForceTimer = null;
+  mainWin.on('close', () => {
+    if (isQuitting) return;
+    if (_closeForceTimer) clearTimeout(_closeForceTimer);
+    _closeForceTimer = setTimeout(() => {
+      if (!mainWin.isDestroyed()) mainWin.destroy();
+    }, 5000);
+  });
+  mainWin.on('closed', () => {
+    if (_closeForceTimer) { clearTimeout(_closeForceTimer); _closeForceTimer = null; }
+  });
+
   startBackend(modelEnv);
 
   try {

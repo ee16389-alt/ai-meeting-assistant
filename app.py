@@ -716,6 +716,7 @@ def _compress_long_transcript(full_text: str, sid: str = "") -> str:
                     "total": total,
                     "stage": "compress",
                     "elapsed_sec": int(time.time() - _map_reduce_start),
+                    "heartbeat": True,
                 }, room=sid)
         if not completed:
             print(f"[Summary] 第 {idx}/{total} 段壓縮超時（>{_CHUNK_TIMEOUT}s），已跳過", flush=True)
