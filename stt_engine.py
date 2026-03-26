@@ -163,7 +163,7 @@ class STTEngine:
     SAMPLE_RATE = 16000
     SILENCE_THRESHOLD = 0.003  # VAD 靜音門檻（RMS）— 僅用於 log，不再跳過靜音
     CHUNK_SAMPLES = 480         # 30ms @ 16kHz
-    AUDIO_GAIN = 4.0            # 音訊增益倍數（補償 Windows 麥克風增益偏低）
+    AUDIO_GAIN = 6.0            # 音訊增益倍數（補償 Windows 麥克風增益偏低）
 
     def __init__(self, model_size: str = "base"):
         if sherpa_onnx is None:
