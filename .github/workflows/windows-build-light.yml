@@ -59,13 +59,6 @@ jobs:
             -Uri "https://aka.ms/vs/17/release/vc_redist.x64.exe" `
             -OutFile "desktop\prereqs\vc_redist.x64.exe"
 
-      - name: Download VB-Cable (bundle for offline install)
-        shell: pwsh
-        run: |
-          Invoke-WebRequest `
-            -Uri "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip" `
-            -OutFile "desktop\prereqs\VBCABLE_Driver_Pack.zip"
-
       - name: Build Windows installer (light - no bundled models)
         working-directory: desktop
         run: npm run build:win

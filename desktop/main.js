@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain, powerSaveBlocker } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, powerSaveBlocker, desktopCapturer } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -580,50 +580,11 @@ ipcMain.handle("power:allowSleep", () => {
   }
 });
 
-// ── VB-Cable 安裝（Windows 限定）────────────────────────
-const VBCABLE_ZIP_URL = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip";
-
-ipcMain.handle("vbcable:install", async () => {
-  if (process.platform !== "win32") {
-    return { ok: false, error: "Only supported on Windows" };
-  }
-  const tmpDir = path.join(app.getPath("temp"), "vbcable_install");
-  const zipPath = path.join(tmpDir, "VBCABLE_Driver_Pack.zip");
-  const extractDir = path.join(tmpDir, "extracted");
-  try {
-    fs.mkdirSync(extractDir, { recursive: true });
-    // 優先使用打包在安裝檔內的 zip，沒有才從網路下載
-    const bundledZip = app.isPackaged
-      ? path.join(process.resourcesPath, "prereqs", "VBCABLE_Driver_Pack.zip")
-      : null;
-    if (bundledZip && fs.existsSync(bundledZip)) {
-      fs.copyFileSync(bundledZip, zipPath);
-    } else {
-      await downloadFile(VBCABLE_ZIP_URL, zipPath, () => {});
-    }
-    await extractZip(zipPath, extractDir);
-    const installer =
-      fs.existsSync(path.join(extractDir, "VBCABLE_Setup_x64.exe"))
-        ? path.join(extractDir, "VBCABLE_Setup_x64.exe")
-        : path.join(extractDir, "VBCABLE_Setup.exe");
-    if (!fs.existsSync(installer)) {
-      return { ok: false, error: "找不到安裝程式" };
-    }
-    await new Promise((resolve, reject) => {
-      // Use PowerShell Start-Process -Verb RunAs to ensure true admin token
-      const ps = spawn("powershell", [
-        "-NoProfile", "-Command",
-        `Start-Process -FilePath '${installer.replace(/'/g, "''")}' -Verb RunAs -Wait`,
-      ], { windowsHide: false });
-      ps.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`exit code ${code}`)));
-      ps.on("error", reject);
-    });
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err.message };
-  } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
-  }
+// ── 系統音訊來源（desktopCapturer）────────────────────────
+ipcMain.handle("desktop:getSources", async (_event, opts) => {
+  const sources = await desktopCapturer.getSources(opts || { types: ["screen"] });
+  // 只傳回 id 與 name，不傳 thumbnail（省記憶體）
+  return sources.map(s => ({ id: s.id, name: s.name }));
 });
 
 ipcMain.handle("draft:save", async (_event, data) => {

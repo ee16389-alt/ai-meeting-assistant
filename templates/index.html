@@ -249,12 +249,6 @@
                                 <option value="default" data-i18n="mic_source_default">預設麥克風</option>
                             </select>
                         </div>
-                        <div id="vbcable-wrap" class="hidden flex-col justify-end pb-0.5">
-                            <button id="vbcable-btn" onclick="installVBCable()" class="flex items-center gap-1.5 text-sm text-slate-600 hover:text-orange-600 px-3 py-2 rounded-lg border border-slate-200 bg-white hover:bg-orange-50 transition-all">
-                                <i data-lucide="download" class="w-3.5 h-3.5"></i>
-                                <span data-i18n="vbcable_btn">安裝虛擬麥克風</span>
-                            </button>
-                        </div>
                     </div>
                 </div>
                 <div id="session-stage" class="hidden text-sm rounded-xl border px-4 py-3 bg-white/80 border-slate-200 text-slate-700"></div>
@@ -663,10 +657,7 @@
                 mic_silent_warning: '已超過 30 秒未收到聲音，請確認麥克風是否正常',
                 mic_source_label: '音訊來源',
                 mic_source_default: '預設麥克風',
-                vbcable_btn: '安裝虛擬麥克風',
-                vbcable_installing: '安裝中...',
-                vbcable_success: '安裝完成，請重新啟動電腦後再選擇虛擬麥克風',
-                vbcable_error: '安裝失敗',
+                audio_source_system: '系統音訊（錄製喇叭聲音）',
             },
             en: {
                 app_title: 'AI Meeting Assistant',
@@ -780,10 +771,7 @@
                 mic_silent_warning: 'No audio detected for 30 seconds. Please check your microphone.',
                 mic_source_label: 'Audio Source',
                 mic_source_default: 'Default Microphone',
-                vbcable_btn: 'Install Virtual Mic',
-                vbcable_installing: 'Installing...',
-                vbcable_success: 'Installed. Please restart your computer then select Virtual Cable as audio source.',
-                vbcable_error: 'Installation failed',
+                audio_source_system: 'System Audio (record speaker output)',
             },
         };
 
@@ -1772,32 +1760,20 @@
                     opt.textContent = d.label || `${t('mic_source_default')} ${i + 1}`;
                     sel.appendChild(opt);
                 });
+                // 系統音訊選項（僅 Electron 環境支援）
+                if (window.electronAPI && window.electronAPI.desktop) {
+                    const sep = document.createElement('option');
+                    sep.disabled = true;
+                    sep.textContent = '──────────';
+                    sel.appendChild(sep);
+                    const sysOpt = document.createElement('option');
+                    sysOpt.value = 'desktop:system';
+                    sysOpt.textContent = t('audio_source_system');
+                    sel.appendChild(sysOpt);
+                }
                 if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
             } catch (e) {
                 console.warn('[Mic] enumerateDevices 失敗:', e);
-            }
-        }
-
-        async function installVBCable() {
-            if (!window.electronAPI || !window.electronAPI.vbcable) return;
-            const btn = document.getElementById('vbcable-btn');
-            const span = btn && btn.querySelector('span');
-            if (btn) btn.disabled = true;
-            if (span) span.textContent = t('vbcable_installing');
-            try {
-                const result = await window.electronAPI.vbcable.install();
-                if (result && result.ok) {
-                    showToast(t('vbcable_success'));
-                    await populateMicDevices();
-                } else {
-                    showToast(t('vbcable_error') + (result && result.error ? ': ' + result.error : ''));
-                }
-            } catch (e) {
-                showToast(t('vbcable_error') + ': ' + e.message);
-            } finally {
-                if (btn) btn.disabled = false;
-                if (span) span.textContent = t('vbcable_btn');
-                lucide.createIcons();
             }
         }
 
@@ -1809,13 +1785,27 @@
 
                 if (!audioStream) {
                     const micSel = document.getElementById('mic-source-select');
-                    const deviceId = micSel && micSel.value !== 'default' ? micSel.value : null;
-                    const constraints = deviceId
-                        ? { audio: { deviceId: { exact: deviceId } } }
-                        : { audio: true };
-                    audioStream = await navigator.mediaDevices.getUserMedia(constraints);
-                    // 取得權限後更新裝置列表（labels 需要權限才可見）
-                    populateMicDevices();
+                    const selectedVal = micSel ? micSel.value : 'default';
+
+                    if (selectedVal === 'desktop:system') {
+                        // 系統音訊模式：錄製喇叭播放的聲音（Teams/Zoom 等）
+                        const sources = await window.electronAPI.desktop.getSources({ types: ['screen'] });
+                        if (!sources || !sources.length) throw new Error('找不到系統音訊來源');
+                        const raw = await navigator.mediaDevices.getUserMedia({
+                            audio: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sources[0].id } },
+                            video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: sources[0].id, maxWidth: 1, maxHeight: 1, maxFrameRate: 1 } },
+                        });
+                        raw.getVideoTracks().forEach(t => t.stop()); // 只需要音訊
+                        audioStream = new MediaStream(raw.getAudioTracks());
+                    } else {
+                        const deviceId = selectedVal !== 'default' ? selectedVal : null;
+                        const constraints = deviceId
+                            ? { audio: { deviceId: { exact: deviceId } } }
+                            : { audio: true };
+                        audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+                        // 取得權限後更新裝置列表（labels 需要權限才可見）
+                        populateMicDevices();
+                    }
                 }
 
                 // 監聽麥克風 track 結束（音訊裝置切換或斷線時觸發）
@@ -1983,10 +1973,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
                 micSourceSelect.disabled = locked;
                 micSourceSelect.classList.toggle('opacity-60', locked);
                 micSourceSelect.classList.toggle('cursor-not-allowed', locked);
-            }
-            const vbcableBtn = document.getElementById('vbcable-btn');
-            if (vbcableBtn) {
-                vbcableBtn.disabled = currentState !== 'idle';
             }
             const transcriptBusy = currentState !== 'idle';
             const summaryBlocked = currentState === 'recording' || currentState === 'paused' || !isTranscriptReady;
@@ -2672,11 +2658,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             // 草稿：啟動時檢查，每 30 秒自動存一次
             checkAndRestoreDraft();
             _autosaveInterval = setInterval(saveDraft, 30000);
-            // VB-Cable 按鈕：僅在 Electron 且有 vbcable API 時顯示（Windows）
-            if (window.electronAPI && window.electronAPI.vbcable) {
-                const wrap = document.getElementById('vbcable-wrap');
-                if (wrap) wrap.classList.remove('hidden');
-            }
             // 裝置插拔時自動更新來源列表
             if (navigator.mediaDevices) {
                 navigator.mediaDevices.addEventListener('devicechange', () => {
