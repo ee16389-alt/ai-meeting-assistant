@@ -655,6 +655,7 @@
                 mic_silent_warning: '已超過 30 秒未收到聲音，請確認麥克風是否正常',
                 mic_source_label: '音訊來源',
                 mic_source_default: '預設麥克風',
+                mic_source_unnamed: '麥克風',
                 audio_source_system: '系統音訊（錄製喇叭聲音）',
             },
             en: {
@@ -769,6 +770,7 @@
                 mic_silent_warning: 'No audio detected for 30 seconds. Please check your microphone.',
                 mic_source_label: 'Audio Source',
                 mic_source_default: 'Default Microphone',
+                mic_source_unnamed: 'Microphone',
                 audio_source_system: 'System Audio (record speaker output)',
             },
         };
@@ -1744,6 +1746,8 @@
             }
         }
 
+        const DESKTOP_SYSTEM_SRC = 'desktop:system';
+
         async function populateMicDevices() {
             const sel = document.getElementById('mic-source-select');
             if (!sel || !navigator.mediaDevices) return;
@@ -1755,7 +1759,7 @@
                 inputs.forEach((d, i) => {
                     const opt = document.createElement('option');
                     opt.value = d.deviceId;
-                    opt.textContent = d.label || `${t('mic_source_default')} ${i + 1}`;
+                    opt.textContent = d.label || `${t('mic_source_unnamed')} ${i + 1}`;
                     sel.appendChild(opt);
                 });
                 // 系統音訊選項（僅 Electron 環境支援）
@@ -1765,7 +1769,7 @@
                     sep.textContent = '──────────';
                     sel.appendChild(sep);
                     const sysOpt = document.createElement('option');
-                    sysOpt.value = 'desktop:system';
+                    sysOpt.value = DESKTOP_SYSTEM_SRC;
                     sysOpt.textContent = t('audio_source_system');
                     sel.appendChild(sysOpt);
                 }
@@ -1785,7 +1789,7 @@
                     const micSel = document.getElementById('mic-source-select');
                     const selectedVal = micSel ? micSel.value : 'default';
 
-                    if (selectedVal === 'desktop:system') {
+                    if (selectedVal === DESKTOP_SYSTEM_SRC) {
                         // 系統音訊模式：錄製喇叭播放的聲音（Teams/Zoom 等）
                         const sources = await window.electronAPI.desktop.getSources({ types: ['screen'] });
                         if (!sources || !sources.length) throw new Error('找不到系統音訊來源');
@@ -2638,7 +2642,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
         const micSourceEl = document.getElementById('mic-source-select');
         if (micSourceEl) {
             micSourceEl.addEventListener('change', () => {
-                if (!isRecording) audioStream = null; // 換裝置時強制重新取得 stream
+                if (!isRecording && audioStream) {
+                    audioStream.getTracks().forEach(t => t.stop());
+                    audioStream = null;
+                }
             });
         }
 
@@ -2650,7 +2657,6 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
 
         window.addEventListener('load', () => {
             initMic();
-            populateMicDevices();
             refreshStoragePath();
             resetDiagnostics();
             // 草稿：啟動時檢查，每 30 秒自動存一次
@@ -2660,7 +2666,10 @@ registerProcessor('pcm-capture-processor', PCMCaptureProcessor);`;
             if (navigator.mediaDevices) {
                 navigator.mediaDevices.addEventListener('devicechange', () => {
                     populateMicDevices();
-                    if (!isRecording) audioStream = null; // 強制重抓，避免使用舊 track
+                    if (!isRecording && audioStream) {
+                        audioStream.getTracks().forEach(t => t.stop());
+                        audioStream = null;
+                    }
                 });
             }
         });
