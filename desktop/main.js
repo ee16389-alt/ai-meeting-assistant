@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, powerSaveBlocker } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -563,6 +563,22 @@ function _parseDraft(content) {
   }
   return resultLines.length ? { lines: resultLines, timestamps: resultTimestamps, meetingName } : null;
 }
+
+// ── 電源管理：錄音期間阻止 Windows 睡眠 ──────────────────
+let _powerBlockerId = null;
+
+ipcMain.handle("power:keepAwake", () => {
+  if (_powerBlockerId === null || !powerSaveBlocker.isStarted(_powerBlockerId)) {
+    _powerBlockerId = powerSaveBlocker.start("prevent-app-suspension");
+  }
+});
+
+ipcMain.handle("power:allowSleep", () => {
+  if (_powerBlockerId !== null && powerSaveBlocker.isStarted(_powerBlockerId)) {
+    powerSaveBlocker.stop(_powerBlockerId);
+    _powerBlockerId = null;
+  }
+});
 
 ipcMain.handle("draft:save", async (_event, data) => {
   try {

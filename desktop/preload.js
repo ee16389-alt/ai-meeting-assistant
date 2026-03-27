@@ -6,4 +6,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     load:  ()     => ipcRenderer.invoke('draft:load'),
     clear: ()     => ipcRenderer.invoke('draft:clear'),
   },
+  power: {
+    keepAwake:  () => ipcRenderer.invoke('power:keepAwake'),
+    allowSleep: () => ipcRenderer.invoke('power:allowSleep'),
+  },
 });

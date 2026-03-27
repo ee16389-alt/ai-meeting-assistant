@@ -1642,6 +1642,7 @@
                 isRecording = true;
                 startRecordingTimer();
                 showAudioQualityIndicator();
+                if (window.electronAPI && window.electronAPI.power) window.electronAPI.power.keepAwake();
                 meetingInput.disabled = true;
                 document.getElementById('save-audio').disabled = true;
             } catch (err) {
@@ -1691,6 +1692,7 @@
                 currentState = 'stopped';
                 stopRecordingTimer();
                 hideAudioQualityIndicator();
+                if (window.electronAPI && window.electronAPI.power) window.electronAPI.power.allowSleep();
                 updateUI();
                 if (mediaRecorder) {
                     mediaRecorder.stop();
