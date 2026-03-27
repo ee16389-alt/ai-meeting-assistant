@@ -602,10 +602,13 @@ ipcMain.handle("vbcable:install", async () => {
       return { ok: false, error: "找不到安裝程式" };
     }
     await new Promise((resolve, reject) => {
-      // VB-Cable installer has admin manifest; Windows auto-elevates via UAC
-      const proc = spawn(installer, [], { windowsHide: false });
-      proc.on("exit", resolve);
-      proc.on("error", reject);
+      // Use PowerShell Start-Process -Verb RunAs to ensure true admin token
+      const ps = spawn("powershell", [
+        "-NoProfile", "-Command",
+        `Start-Process -FilePath '${installer.replace(/'/g, "''")}' -Verb RunAs -Wait`,
+      ], { windowsHide: false });
+      ps.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`exit code ${code}`)));
+      ps.on("error", reject);
     });
     return { ok: true };
   } catch (err) {
