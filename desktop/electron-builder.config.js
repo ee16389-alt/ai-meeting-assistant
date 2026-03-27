@@ -42,6 +42,14 @@ if (fs.existsSync(vcRedistPath)) {
   });
 }
 
+const vbcablePath = path.join(__dirname, "prereqs", "VBCABLE_Driver_Pack.zip");
+if (fs.existsSync(vbcablePath)) {
+  extraResources.push({
+    from: "prereqs/VBCABLE_Driver_Pack.zip",
+    to: "prereqs/VBCABLE_Driver_Pack.zip",
+  });
+}
+
 module.exports = {
   appId: "com.minashih.ai-meeting-assistant",
   productName: "AI Meeting Assistant",

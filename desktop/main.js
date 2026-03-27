@@ -592,7 +592,15 @@ ipcMain.handle("vbcable:install", async () => {
   const extractDir = path.join(tmpDir, "extracted");
   try {
     fs.mkdirSync(extractDir, { recursive: true });
-    await downloadFile(VBCABLE_ZIP_URL, zipPath, () => {});
+    // 優先使用打包在安裝檔內的 zip，沒有才從網路下載
+    const bundledZip = app.isPackaged
+      ? path.join(process.resourcesPath, "prereqs", "VBCABLE_Driver_Pack.zip")
+      : null;
+    if (bundledZip && fs.existsSync(bundledZip)) {
+      fs.copyFileSync(bundledZip, zipPath);
+    } else {
+      await downloadFile(VBCABLE_ZIP_URL, zipPath, () => {});
+    }
     await extractZip(zipPath, extractDir);
     const installer =
       fs.existsSync(path.join(extractDir, "VBCABLE_Setup_x64.exe"))
