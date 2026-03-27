@@ -580,6 +580,41 @@ ipcMain.handle("power:allowSleep", () => {
   }
 });
 
+// ── VB-Cable 安裝（Windows 限定）────────────────────────
+const VBCABLE_ZIP_URL = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip";
+
+ipcMain.handle("vbcable:install", async () => {
+  if (process.platform !== "win32") {
+    return { ok: false, error: "Only supported on Windows" };
+  }
+  const tmpDir = path.join(app.getPath("temp"), "vbcable_install");
+  const zipPath = path.join(tmpDir, "VBCABLE_Driver_Pack.zip");
+  const extractDir = path.join(tmpDir, "extracted");
+  try {
+    fs.mkdirSync(extractDir, { recursive: true });
+    await downloadFile(VBCABLE_ZIP_URL, zipPath, () => {});
+    await extractZip(zipPath, extractDir);
+    const installer =
+      fs.existsSync(path.join(extractDir, "VBCABLE_Setup_x64.exe"))
+        ? path.join(extractDir, "VBCABLE_Setup_x64.exe")
+        : path.join(extractDir, "VBCABLE_Setup.exe");
+    if (!fs.existsSync(installer)) {
+      return { ok: false, error: "找不到安裝程式" };
+    }
+    await new Promise((resolve, reject) => {
+      // VB-Cable installer has admin manifest; Windows auto-elevates via UAC
+      const proc = spawn(installer, [], { windowsHide: false });
+      proc.on("exit", resolve);
+      proc.on("error", reject);
+    });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
 ipcMain.handle("draft:save", async (_event, data) => {
   try {
     const meetingName = (data && data.meetingName) ? data.meetingName.trim() : "";

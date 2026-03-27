@@ -10,4 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     keepAwake:  () => ipcRenderer.invoke('power:keepAwake'),
     allowSleep: () => ipcRenderer.invoke('power:allowSleep'),
   },
+  vbcable: {
+    install: () => ipcRenderer.invoke('vbcable:install'),
+  },
 });
